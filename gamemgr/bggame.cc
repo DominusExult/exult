@@ -49,6 +49,7 @@
 #include "sigame.h"
 #include "touchui.h"
 #include "txtscroll.h"
+#include "game.h"
 
 #include <SDL.h>
 #include <SDL_events.h>
@@ -1888,12 +1889,12 @@ void BG_Game::end_game(bool success) {
 
 		// Fade out for 1 sec (50 cycles)
 		pal->fade(50, 0, 0);
-#if 0
-		//TODO: only when finishing a game and not when viewed from menu
-		if (when not in menu) {
-			if (wait_delay(10)) break;
 
-			// Congratulations
+// Congratulations
+		if (!menu_end_game) {
+			if (wait_delay(10)) {
+				throw UserSkipException();
+			}
 
 			// Paint backgound black
 			win->fill8(0);
@@ -1902,7 +1903,15 @@ void BG_Game::end_game(bool success) {
 
 			//TODO: figure out the time it took to complete the game
 			// in exultmsg.txt it is "%d year s ,  %d month s , &  %d day s"
-			// only showing years or months if there were any
+			// only showing years or months if there were any?
+#if 0
+			// get passed years, months, days, assuming 365 days=1 year, 30 days=1 month
+			int ndays = clock->get_day(); // that's not working
+			int years = ndays /365;
+			ndays = ndays-(365*years)
+			int months = ndays /30;
+			int days = ndays-(m*30);
+#endif
 			for (unsigned int i = 0; i < 9; i++) {
 				message = get_text_msg(congrats + i);
 				normal->draw_text(ibuf, centerx - normal->get_text_width(message) / 2, starty + normal->get_text_height()*i, message);
@@ -1920,8 +1929,7 @@ void BG_Game::end_game(bool success) {
 
 			// Fade out for 1 sec (50 cycles)
 			pal->fade(50, 0, 0);
-		}
-#endif
+		};
 
 	} catch (const UserSkipException &/*x*/) {
 	}

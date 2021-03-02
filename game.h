@@ -152,6 +152,7 @@ public:
 	inline static void set_ticks(unsigned int t) {
 		ticks = t;
 	}
+	static bool menu_end_game;
 };
 
 extern Game *game;

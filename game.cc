@@ -56,6 +56,7 @@ using std::string;
 
 bool Game::new_game_flag = false;
 bool Game::editing_flag = false;
+bool Game::menu_end_game = false;
 Game *game = nullptr;
 Exult_Game Game::game_type = NONE;
 Game_Language Game::language = ENGLISH;
@@ -363,6 +364,7 @@ bool Game::show_menu(bool skip) {
 			if (game_type == EXULT_DEVEL_GAME)
 				break;
 			pal->fade_out(c_fade_out_time);
+			end_game_menu = true;
 			end_game(true);
 			top_menu();
 			break;
