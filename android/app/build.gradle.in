@@ -8,7 +8,6 @@ def getGitCommitId() {
 
 android {
     compileSdkVersion @ANDROID_SDK_VERSION@
-    buildToolsVersion "@ANDROID_BUILD_TOOLS_VERSION@"
     ndkVersion "@ANDROID_NDK_VERSION@"
 
     defaultConfig {
