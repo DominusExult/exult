@@ -13,7 +13,7 @@ android {
     defaultConfig {
         applicationId "info.exult"
         minSdkVersion 28 // could lower to 18 if we locally implement glob()
-        targetSdkVersion 31
+        targetSdkVersion 30
         versionCode 1
         versionName "@VERSION@ (" + getGitCommitId() + ")"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
