@@ -333,7 +333,7 @@ if test x$enable_android_apk != xno; then
 	AC_SUBST(ANDROID_NDK_VERSION, $ANDROID_NDK_VERSION)
 
 	# Check for required Android CMake version.
-	ANDROID_CMAKE_VERSION=3.18.1
+	ANDROID_CMAKE_VERSION=3.22.1
 	AC_MSG_CHECKING([for Android CMake $ANDROID_CMAKE_VERSION])
 	if $SDKMANAGER --list|grep -q "cmake;$ANDROID_CMAKE_VERSION"; then
 		AC_MSG_RESULT([yes])
