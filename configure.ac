@@ -303,7 +303,7 @@ if test x$enable_android_apk != xno; then
 	AC_PATH_PROGS(SDKMANAGER, sdkmanager)
 
 	# Check for required Android SDK version.
-	ANDROID_SDK_VERSION=31
+	ANDROID_SDK_VERSION=34
 	AC_MSG_CHECKING([for Android SDK $ANDROID_SDK_VERSION])
 	if $SDKMANAGER --list|grep -q "platforms;android-$ANDROID_SDK_VERSION"; then
 		AC_MSG_RESULT([yes])
@@ -313,7 +313,7 @@ if test x$enable_android_apk != xno; then
 	AC_SUBST(ANDROID_SDK_VERSION, $ANDROID_SDK_VERSION)
 
 	# Check for required Android SDK Build-Tools version.
-	ANDROID_BUILD_TOOLS_VERSION=30.0.3
+	ANDROID_BUILD_TOOLS_VERSION=34.0.0
 	AC_MSG_CHECKING([for Android SDK Build-Tools $ANDROID_BUILD_TOOLS_VERSION])
 	if $SDKMANAGER --list|grep -q "build-tools;$ANDROID_BUILD_TOOLS_VERSION"; then
 		AC_MSG_RESULT([yes])
