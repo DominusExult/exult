@@ -296,7 +296,7 @@ if test x$enable_android_apk != xno; then
 		AC_MSG_RESULT([found $gradle_version >= 7.5])
 	], [
 		dnl $gradle_version < 7.5
-		AC_MSG_ERROR([found $gradle_version < 7.52])
+		AC_MSG_ERROR([found $gradle_version < 7.5])
 	])
 
 	# Use sdkmanager to check Android package versions.
@@ -323,7 +323,7 @@ if test x$enable_android_apk != xno; then
 	AC_SUBST(ANDROID_BUILD_TOOLS_VERSION, $ANDROID_BUILD_TOOLS_VERSION)
 
 	# Check for required Android NDK version.
-	ANDROID_NDK_VERSION=23.2.8568313
+	ANDROID_NDK_VERSION=25.2.9519653
 	AC_MSG_CHECKING([for Android NDK $ANDROID_NDK_VERSION])
 	if $SDKMANAGER --list|grep -q "ndk;$ANDROID_NDK_VERSION"; then
 		AC_MSG_RESULT([yes])
