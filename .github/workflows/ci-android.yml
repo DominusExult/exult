@@ -116,7 +116,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: 7.5
+          gradle-version: 8.7
       - name: Install dependencies
         run: |
           if ! apt-fast -- help &> /dev/null; then
@@ -146,7 +146,6 @@ jobs:
             --disable-nxbr --disable-zip-support --disable-sdl-parachute
       - name: Build
         run: |
-          unset ANDROID_SDK_ROOT
           cd ./../build/files && make -j2
           cd ./../data && make -j2
           cd ./../android && make -j2
