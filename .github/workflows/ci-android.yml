@@ -113,6 +113,8 @@ jobs:
           sdkmanager 'build-tools;34.0.0'
           ln -s ${ANDROID_HOME}/build-tools/34.0.0/d8 ${ANDROID_HOME}/build-tools/34.0.0/dx
           ln -s ${ANDROID_HOME}/build-tools/34.0.0/lib/d8.jar ${ANDROID_HOME}/build-tools/34.0.0/lib/dx.jar
+          cd ${ANDROID_HOME}/build-tools/34.0.0/lib
+          echo `ls`
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
