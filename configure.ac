@@ -344,6 +344,7 @@ if test x$enable_android_apk != xno; then
 
 	# Pass down SDK directory
 	AC_SUBST(ANDROID_HOME, `AS_DIRNAME(["$SDKMANAGER"])`/../../..)
+	AC_SUBST(ANDROID_SDK_ROOT, `AS_DIRNAME(["$SDKMANAGER"])`/../../..)
 
 	# Enable Android APK build
 	AM_CONDITIONAL(ANDROID_APK, true)

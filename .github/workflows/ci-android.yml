@@ -138,7 +138,6 @@ jobs:
           autoreconf -v -i
       - name: Configure
         run: |
-          unset ANDROID_SDK_ROOT
           cd ./../build
           ./../exult/configure --enable-data --enable-android-apk=debug \
             --disable-exult --disable-tools --disable-timidity-midi --disable-alsa \
