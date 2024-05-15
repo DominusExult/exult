@@ -67,7 +67,7 @@ GRADLE_PROJECT_PROPS=--project-prop EXULT_SOURCE_DIR=$(abs_top_srcdir) --project
 # Always call the gradle wrapper to update the APK
 .PHONY: $(ANDROID_APK)
 $(ANDROID_APK): $(abs_builddir)/gradlew
-	ANDROID_HOME=$(ANDROID_HOME) ./gradlew assemble$(APK_BUILD_TYPE) $(GRADLE_PROJECT_PROPS)
+	ANDROID_HOME=$(ANDROID_HOME) ./gradlew assemble$(APK_BUILD_TYPE) $(GRADLE_PROJECT_PROPS) --info
 
 # Generate the gradle wrapper
 $(abs_builddir)/gradlew: $(APK_BUILD_TREE) android_packages
