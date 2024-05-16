@@ -1,4 +1,4 @@
-name: ci-android
+name: ci-android-sign
 
 on:
   push:
@@ -104,17 +104,15 @@ jobs:
           $ANDROID_SDK_ROOT/build-tools/34.0.0/zipalign -v -p 4 ./app/build/outputs/apk/release/app-release-unsigned.apk ./app/build/outputs/apk/release/app-release-unsigned-aligned.apk
           rm ./app/build/outputs/apk/release/app-release-unsigned.apk
       - name: Sign APK
-        uses: kevin-david/zipalign-sign-android-release@v1.1.1
+        uses: noriban/sign-android-release@v5
         id: sign_app
         with:
           releaseDirectory: ./../build/android/app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
           alias: ${{ secrets.ANDROID_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          zipAlign: false
       - name: Upload artifacts
         uses: actions/upload-artifact@v3
         with:
           name: "android snapshot"
-          path: android-snapshot
+          path: ${{steps.sign_app.outputs.signedReleaseFile}}
