@@ -53,52 +53,6 @@ on:
       - ".github/workflows/ci-android.yml"
 
 jobs:
-  notify:
-    name: Exult-CI (IRC & Discord notification)
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    needs:
-      - ci-android
-    if: ${{ always() && (github.repository_owner == 'exult' && github.event_name != 'pull_request') }}
-    steps:
-      - name: IRC success notification (ircs://irc.libera.chat:6697/#exult)
-        uses: Gottox/irc-message-action@v2
-        if: needs.ci-android.result == 'success'
-        with:
-          server: irc.libera.chat
-          port: 6697
-          channel: "#exult"
-          nickname: github-actions
-          tls: true
-          message: "\x0313exult\x03/\x0306${{ github.ref }}\x03 \x0314${{ github.sha }}\x03 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} The Android build \x033succeeded\x03."
-      - name: IRC failure notification (ircs://irc.libera.chat:6697/#exult)
-        uses: Gottox/irc-message-action@v2
-        if: needs.ci-android.result != 'success'
-        with:
-          server: irc.libera.chat
-          port: 6697
-          channel: "#exult"
-          nickname: github-actions
-          tls: true
-          message: "\x0313exult\x03/\x0306${{ github.ref }}\x03 \x0314${{ github.sha }}\x03 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} The Android build \x034failed\x03."
-      - name: Discord success notification
-        uses: BubbleProd/discord-webhook-notify@v2.0.1
-        if: needs.ci-android.result == 'success'
-        with:
-          severity: info
-          username: github-actions
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-          text: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          title: "The Android build succeeded."
-      - name: Discord failure notification
-        uses: BubbleProd/discord-webhook-notify@v2.0.1
-        if: needs.ci-android.result != 'success'
-        with:
-          severity: error
-          username: github-actions
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-          text: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          title: "The Android build failed."
   ci-android:
     runs-on: ubuntu-latest
     steps:
@@ -138,7 +92,7 @@ jobs:
       - name: Configure
         run: |
           cd ./../build
-          ./../exult/configure --enable-data --enable-android-apk=debug \
+          ./../exult/configure --enable-data --enable-android-apk=release \
             --disable-exult --disable-tools --disable-timidity-midi --disable-alsa \
             --disable-fluidsynth --disable-mt32emu --disable-all-hq-scalers \
             --disable-nxbr --disable-zip-support --disable-sdl-parachute
@@ -147,3 +101,18 @@ jobs:
           cd ./../build/files && make -j2
           cd ./../data && make -j2
           cd ./../android && make -j2
+          $ANDROID_SDK_ROOT/build-tools/34.0.0/zipalign -v -p 4 ./app/build/outputs/apk/release/app-release-unsigned.apk ./app/build/outputs/apk/release/app-release-unsigned-aligned.apk
+          rm ./app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Sign APK
+        uses: noriban/sign-android-release@v5
+        id: sign_app
+        with:
+          releaseDirectory: ./../build/android/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.ANDROID_SIGNING_KEY }}
+          alias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: "android snapshot"
+          path: ${{steps.sign_app.outputs.signedReleaseFile}}
