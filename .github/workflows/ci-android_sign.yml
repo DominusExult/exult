@@ -1,4 +1,4 @@
-name: ci-android-sign
+name: ci-android
 
 on:
   push:
