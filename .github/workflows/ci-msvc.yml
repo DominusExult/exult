@@ -104,9 +104,9 @@ jobs:
           embed-description: ${{ github.event.pull_request.body }}
           embed-url: ${{ github.event.pull_request.html_url }}
           embed-timestamp:
+      - name: Discord success notification
         uses: BubbleProd/discord-webhook-notify@v2.0.1
         continue-on-error: true
-        if: needs.ci-macos.result == 'success'
         with:
           severity: info
           username: github-actions
