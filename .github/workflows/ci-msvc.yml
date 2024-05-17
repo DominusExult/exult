@@ -88,7 +88,7 @@ jobs:
     steps:
       - name: Logging
         run: |
-          echo "${{toJSON(github.event)}}"
+          echo '${{toJSON(github.event)}}'
       - name: Discord success notification
         uses: tsickert/discord-webhook@v6.0.0
         continue-on-error: true
