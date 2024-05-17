@@ -89,3 +89,40 @@ jobs:
     - name: Build
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=${{env.BUILD_PLATFORM}} ${{env.SOLUTION_FILE_PATH}} /t:${{env.BUILD_PROJECTS}}
+  notify:
+    name: Exult-CI (IRC & Discord notification)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs:
+      - ci-msvc
+    steps:
+      - name: Discord success notification
+        uses: tsickert/discord-webhook@v6
+        continue-on-error: true
+        if: needs.ci-msvc.result == 'success'
+        with:
+          username: github-actions
+          webhookUrl: ${{ secrets.WEBHOOK }}
+          embed-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          embed-title: 'The MSVC build succeeded.'
+          embed-color: 15430476
+          embed-author-name: ${{ github.event.pull_request.user.login }}
+          embed-author-url: ${{ github.event.pull_request.user.html_url }}
+          embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
+          embed-description: ${{ github.event.pull_request.body }}
+          embed-url: ${{ github.event.pull_request.html_url }}
+      - name: Discord failure notification
+        uses: tsickert/discord-webhook@v6
+        continue-on-error: true
+        if: needs.ci-msvc.result != 'success'
+        with:
+          username: github-actions
+          webhookUrl: ${{ secrets.WEBHOOK }}
+          embed-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          embed-title: 'The MSVC build succeeded.'
+          embed-color: 15430476
+          embed-author-name: ${{ github.event.pull_request.user.login }}
+          embed-author-url: ${{ github.event.pull_request.user.html_url }}
+          embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
+          embed-description: ${{ github.event.pull_request.body }}
+          embed-url: ${{ github.event.pull_request.html_url }}
