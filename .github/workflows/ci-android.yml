@@ -105,7 +105,7 @@ jobs:
           $ANDROID_SDK_ROOT/build-tools/34.0.0/zipalign -v -p 4 ./app/build/outputs/apk/release/app-release-unsigned.apk ./app/build/outputs/apk/release/app-release-unsigned-aligned.apk
           rm ./app/build/outputs/apk/release/app-release-unsigned.apk
       - name: Sign APK
-        uses: noriban/sign-android-release@v5
+        uses: noriban/sign-android-release@v5.1
         id: sign_app
         with:
           releaseDirectory: ./../build/android/app/build/outputs/apk/release
@@ -142,5 +142,5 @@ jobs:
         uses: geekyeggo/delete-artifact@v5
         with:
           name: |
-            android*
+            a
           failOnError: false
