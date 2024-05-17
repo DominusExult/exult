@@ -73,12 +73,6 @@ permissions:
   contents: read
 
 jobs:
-  ci-msvc:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Install dependencies
-        run: |
-          ech
   notify:
     name: Exult-CI (IRC & Discord notification)
     runs-on: ubuntu-latest
@@ -94,7 +88,7 @@ jobs:
           severity: info
           username: github-actions
           webhookUrl: ${{ secrets.WEBHOOK }}
-          text: '**[The MSVC build succeeded.](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**'
+          text: '**[The MSVC build succeeded:](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**'
       - name: Discord failure notification
         uses: rjstone/discord-webhook-notify@master
         continue-on-error: true
@@ -103,4 +97,10 @@ jobs:
           severity: error
           username: github-actions
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-          text: '**[The MSVC build failed.](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**'
+          text: '**[The MSVC build failed:](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**'
+  ci-msvc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          ech
