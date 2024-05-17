@@ -87,43 +87,21 @@ jobs:
       - ci-msvc
     steps:
       - name: Discord success notification
-        uses: tsickert/discord-webhook@v6.0.0
+        uses: rjstone/discord-webhook-notify@master
         continue-on-error: true
         if: needs.ci-msvc.result == 'success'
-        with:
-          webhook-url: ${{ secrets.WEBHOOK }}
-          content: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          username: github-actions
-          avatar-url: "https://cdn.discordapp.com/avatars/999680196040982618/df91181b3f1cf0ef1592fbe18e0962d7.webp"
-          embed-footer-text: ${{ github.event.head_commit.message }}
-          embed-title: 'The MSVC build succeeded.'
-          embed-color: 65280
-          embed-author-name: ${{ github.event.head_commit.author.username }}
-          #embed-author-url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          #embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
-          #embed-description: ${{ github.event.pull_request.body }}
-          embed-url: ${{ github.event.head_commit.url }}
-          embed-timestamp: ${{ github.event.head_commit.timestamp }}
-      - name: Discord success notification
-        uses: rjstone/discord-webhook-notify@master
         continue-on-error: true
         with:
           severity: info
           username: github-actions
           webhookUrl: ${{ secrets.WEBHOOK }}
-          text: '[The MSVC build succeeded.](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})'
+          text: '__**[The MSVC build succeeded.](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**__'
       - name: Discord failure notification
-        uses: tsickert/discord-webhook@v6.0.0
+        uses: rjstone/discord-webhook-notify@master
         continue-on-error: true
         if: needs.ci-msvc.result != 'success'
         with:
+          severity: error
           username: github-actions
-          webhook-url: ${{ secrets.WEBHOOK }}
-          embed-footer-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          embed-title: 'The MSVC build failed.'
-          embed-color: 16711680
-          embed-author-name: ${{ github.event.pull_request.user.login }}
-          embed-author-url: ${{ github.event.pull_request.user.html_url }}
-          embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
-          embed-description: ${{ github.event.pull_request.body }}
-          embed-url: ${{ github.event.pull_request.html_url }}
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+          text: '__**[The MSVC build failed.](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**__'
