@@ -111,8 +111,7 @@ jobs:
           severity: info
           username: github-actions
           webhookUrl: ${{ secrets.WEBHOOK }}
-          text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          #title: 'The macOS build succeeded.' 
+          text: '[The MSVC build succeeded.](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})'
       - name: Discord failure notification
         uses: tsickert/discord-webhook@v6.0.0
         continue-on-error: true
