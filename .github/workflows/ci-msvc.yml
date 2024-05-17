@@ -94,6 +94,7 @@ jobs:
           webhook-url: ${{ secrets.WEBHOOK }}
           content: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           username: github-actions
+          avatar-url: "https://cdn.discordapp.com/avatars/999680196040982618/df91181b3f1cf0ef1592fbe18e0962d7.webp"
           #embed-footer-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           embed-title: 'The MSVC build succeeded.'
           embed-color: 65280
@@ -103,7 +104,6 @@ jobs:
           embed-description: ${{ github.event.pull_request.body }}
           embed-url: ${{ github.event.pull_request.html_url }}
           embed-timestamp:
-      - name: Discord success notification
         uses: BubbleProd/discord-webhook-notify@v2.0.1
         continue-on-error: true
         if: needs.ci-macos.result == 'success'
