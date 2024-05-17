@@ -79,6 +79,7 @@ jobs:
     continue-on-error: true
     needs:
       - ci-msvc
+    if: ${{ always() && (github.repository_owner == 'exult' && github.event_name != 'pull_request') }}
     steps:
       - name: Discord success notification
         uses: rjstone/discord-webhook-notify@master
