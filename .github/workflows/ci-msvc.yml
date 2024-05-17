@@ -92,16 +92,27 @@ jobs:
         if: needs.ci-msvc.result == 'success'
         with:
           webhook-url: ${{ secrets.WEBHOOK }}
+          content: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           username: github-actions
-          embed-footer-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          #embed-footer-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           embed-title: 'The MSVC build succeeded.'
           embed-color: 65280
           embed-author-name: ${{ github.event.pull_request.user.login }}
-          embed-author-url: ${{ github.event.pull_request.user.html_url }}
+          embed-author-url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
           embed-description: ${{ github.event.pull_request.body }}
           embed-url: ${{ github.event.pull_request.html_url }}
-          embed-timestamp: "2021-09-24T02:17:53+0000"
+          embed-timestamp:
+      - name: Discord success notification
+        uses: BubbleProd/discord-webhook-notify@v2.0.1
+        continue-on-error: true
+        if: needs.ci-macos.result == 'success'
+        with:
+          severity: info
+          username: github-actions
+          webhookUrl: ${{ secrets.WEBHOOK }}
+          text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          title: 'The macOS build succeeded.' 
       - name: Discord failure notification
         uses: tsickert/discord-webhook@v6.0.0
         continue-on-error: true
