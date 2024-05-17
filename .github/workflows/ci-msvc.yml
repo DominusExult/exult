@@ -93,9 +93,9 @@ jobs:
         with:
           webhook-url: ${{ secrets.WEBHOOK }}
           username: github-actions
-          embed-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          embed-footer-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
           embed-title: 'The MSVC build succeeded.'
-          embed-color: 15430476
+          embed-color: 65280
           embed-author-name: ${{ github.event.pull_request.user.login }}
           embed-author-url: ${{ github.event.pull_request.user.html_url }}
           embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
@@ -109,9 +109,9 @@ jobs:
         with:
           username: github-actions
           webhook-url: ${{ secrets.WEBHOOK }}
-          embed-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          embed-title: 'The MSVC build succeeded.'
-          embed-color: 15430476
+          embed-footer-text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          embed-title: 'The MSVC build failed.'
+          embed-color: 16711680
           embed-author-name: ${{ github.event.pull_request.user.login }}
           embed-author-url: ${{ github.event.pull_request.user.html_url }}
           embed-author-icon-url: ${{ github.event.pull_request.user.avatar_url }}
