@@ -97,7 +97,7 @@ jobs:
         with:
           severity: error
           username: github-actions
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+          webhookUrl: ${{ secrets.WEBHOOK }}
           text: '**[The MSVC build failed:](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**'
   ci-msvc:
     runs-on: ubuntu-latest
