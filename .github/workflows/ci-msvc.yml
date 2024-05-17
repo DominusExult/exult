@@ -86,6 +86,9 @@ jobs:
     needs:
       - ci-msvc
     steps:
+      - name: Logging
+        run: |
+          echo "${{toJSON(github.event)}}"
       - name: Discord success notification
         uses: tsickert/discord-webhook@v6.0.0
         continue-on-error: true
@@ -105,14 +108,14 @@ jobs:
           embed-url: ${{ github.event.pull_request.html_url }}
           embed-timestamp:
       - name: Discord success notification
-        uses: BubbleProd/discord-webhook-notify@v2.0.1
+        uses: rjstone/discord-webhook-notify@master
         continue-on-error: true
         with:
           severity: info
           username: github-actions
           webhookUrl: ${{ secrets.WEBHOOK }}
           text: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-          title: 'The macOS build succeeded.' 
+          #title: 'The macOS build succeeded.' 
       - name: Discord failure notification
         uses: tsickert/discord-webhook@v6.0.0
         continue-on-error: true
