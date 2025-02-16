@@ -108,10 +108,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sys: [mingw32, mingw64, clang64]
+        sys: [mingw32]
         include:
           - { sys: mingw32, env: mingw-w64-i686 }
-          - { sys: mingw64, env: mingw-w64-x86_64 }
     defaults:
       run:
         shell: msys2 {0}
@@ -128,9 +127,14 @@ jobs:
             ${{ matrix.env }}-libpng ${{ matrix.env }}-zlib ${{ matrix.env }}-SDL2_image
             ${{ matrix.env }}-gtk3 ${{ matrix.env }}-adwaita-icon-theme ${{ matrix.env }}-libxml2 ${{ matrix.env }}-freetype
             ${{ matrix.env }}-gtk2 ${{ matrix.env }}-gimp ${{ matrix.env }}-icu ${{ matrix.env }}-cmake
+      - name: Checkout munt
+        uses: actions/checkout@v4
+        with:
+          repository: munt/munt
+          ref: libmt32emu_2_7_1
+          path: libmt32emu
       - name: install mt32emu
         run: |
-          git -c advice.detachedHead=false clone -b libmt32emu_2_7_1 --depth 1 https://github.com/munt/munt libmt32emu
           mkdir munt && cd munt
           cmake ./../libmt32emu -Dmunt_WITH_MT32EMU_SMF2WAV=FALSE -Dmunt_WITH_MT32EMU_QT=FALSE -DCMAKE_INSTALL_PREFIX=$MINGW_PREFIX
           ninja install
