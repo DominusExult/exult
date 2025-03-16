@@ -332,10 +332,200 @@ bool saveFrameToPNG(const char* filename, const unsigned char* data, int width, 
 }
 
 // Function to export PNG to SHP
-bool exportSHP(const char* pngFilename, const char* outputShpFilename, bool useTransparency,
-               int hotspotX, int hotspotY, const char* metadataFile) {
-    std::cerr << "Exporting SHP is not yet implemented" << std::endl;
-    return false;
+bool exportSHP(const char* basePath, const char* outputShpFilename, bool useTransparency,
+               int defaultHotspotX, int defaultHotspotY, const char* metadataFile) {
+    std::cout << "Exporting to SHP: " << outputShpFilename << std::endl;
+    std::cout << "Using base path: " << basePath << std::endl;
+    std::cout << "Using metadata file: " << metadataFile << std::endl;
+
+    // Read metadata to get number of frames and hotspots
+    FILE* metaFile = fopen(metadataFile, "r");
+    if (!metaFile) {
+        std::cerr << "Error: Unable to open metadata file: " << metadataFile << std::endl;
+        return false;
+    }
+
+    // Parse metadata
+    int numFrames = 0;
+    char line[256];
+    std::vector<std::pair<int, int>> hotspots;
+
+    while (fgets(line, sizeof(line), metaFile)) {
+        // Remove newline if present
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+            line[len-1] = '\0';
+        }
+
+        if (strncmp(line, "num_frames=", 11) == 0) {
+            numFrames = atoi(line + 11);
+            hotspots.resize(numFrames, std::make_pair(defaultHotspotX, defaultHotspotY));
+        }
+        else if (strncmp(line, "frame", 5) == 0 && strstr(line, "hotspot_x=")) {
+            // Parse frame index and hotspot_x value
+            int frameIndex = 0;
+            int hotspotX = 0;
+            sscanf(line, "frame%d_hotspot_x=%d", &frameIndex, &hotspotX);
+            if (frameIndex >= 0 && frameIndex < numFrames) {
+                hotspots[frameIndex].first = hotspotX;
+            }
+        }
+        else if (strncmp(line, "frame", 5) == 0 && strstr(line, "hotspot_y=")) {
+            // Parse frame index and hotspot_y value
+            int frameIndex = 0;
+            int hotspotY = 0;
+            sscanf(line, "frame%d_hotspot_y=%d", &frameIndex, &hotspotY);
+            if (frameIndex >= 0 && frameIndex < numFrames) {
+                hotspots[frameIndex].second = hotspotY;
+            }
+        }
+    }
+
+    fclose(metaFile);
+
+    if (numFrames <= 0) {
+        std::cerr << "Error: No frames specified in metadata" << std::endl;
+        return false;
+    }
+
+    std::cout << "Exporting " << numFrames << " frames" << std::endl;
+
+    // Create the Shape_file
+    Shape_file shapeFile;
+    shapeFile.resize(numFrames);
+
+    // Load each PNG frame and create Shape_frames
+    for (int i = 0; i < numFrames; i++) {
+        // Construct the PNG filename
+        std::string pngFilename = std::string(basePath) + std::to_string(i) + ".png";
+        
+        // Open the PNG file
+        FILE* fp = fopen(pngFilename.c_str(), "rb");
+        if (!fp) {
+            std::cerr << "Error: Could not open frame file: " << pngFilename << std::endl;
+            return false;
+        }
+
+        // Initialize PNG read structures
+        png_structp png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+        if (!png_ptr) {
+            fclose(fp);
+            return false;
+        }
+
+        png_infop info_ptr = png_create_info_struct(png_ptr);
+        if (!info_ptr) {
+            png_destroy_read_struct(&png_ptr, NULL, NULL);
+            fclose(fp);
+            return false;
+        }
+
+        if (setjmp(png_jmpbuf(png_ptr))) {
+            png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+            fclose(fp);
+            return false;
+        }
+
+        png_init_io(png_ptr, fp);
+        png_read_info(png_ptr, info_ptr);
+
+        // Get image dimensions
+        int width = png_get_image_width(png_ptr, info_ptr);
+        int height = png_get_image_height(png_ptr, info_ptr);
+        int color_type = png_get_color_type(png_ptr, info_ptr);
+        int bit_depth = png_get_bit_depth(png_ptr, info_ptr);
+
+        // Make sure it's an indexed color image
+        if (color_type != PNG_COLOR_TYPE_PALETTE) {
+            std::cerr << "Error: Frame " << i << " is not an indexed color image" << std::endl;
+            png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+            fclose(fp);
+            return false;
+        }
+
+        // Read the image data
+        std::vector<png_bytep> row_pointers(height);
+        std::vector<unsigned char> imageData(width * height);
+
+        for (int y = 0; y < height; y++) {
+            row_pointers[y] = (png_bytep)&imageData[y * width];
+        }
+
+        png_read_image(png_ptr, row_pointers.data());
+
+        // Get transparency information if available
+        png_bytep trans = NULL;
+        int num_trans = 0;
+        png_color_16p trans_values = NULL;
+
+        if (png_get_tRNS(png_ptr, info_ptr, &trans, &num_trans, &trans_values)) {
+            // PNG has transparency data
+        }
+
+        // Clean up PNG read
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        fclose(fp);
+
+        // Process the image data for Shape_frame creation
+        unsigned char transparentIndex = 255; // Default transparent index in Exult
+        
+        // Create a buffer for the frame data - DON'T pre-fill with transparency
+        unsigned char* pixels = new unsigned char[width * height];
+        
+        // Copy all pixels from PNG, treating index 255 as transparent
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                unsigned char pixel = imageData[y * width + x];
+                
+                // Store the original pixel value - Shape_frame expects index 255 to be transparent
+                // We shouldn't pre-fill or modify non-transparent pixels
+                pixels[y * width + x] = pixel;
+            }
+        }
+        
+        // Get hotspot for this frame
+        int xleft = hotspots[i].first;
+        int yabove = hotspots[i].second;
+
+        std::cout << "Frame " << i << ": " << width << "x" << height 
+                  << " hotspot(" << xleft << "," << yabove << ")" << std::endl;
+
+        // Create Shape_frame with the correct constructor
+        // The Shape_frame constructor expects raw pixel data
+        try {
+            // Create the frame - must use the constructor that takes raw pixel data
+            // The "true" parameter is critical - it tells Shape_frame to make a copy
+            std::unique_ptr<Shape_frame> frame = std::make_unique<Shape_frame>(
+                pixels,        // raw pixel data
+                width, height, // dimensions
+                xleft, yabove, // hotspot
+                true           // make a copy of the data
+            );
+            
+            // Add the frame to the shape file
+            shapeFile.set_frame(std::move(frame), i);
+        } catch (std::exception& e) {
+            std::cerr << "Exception creating Shape_frame: " << e.what() << std::endl;
+            delete[] pixels;
+            return false;
+        }
+        
+        // Clean up the pixel data 
+        delete[] pixels;
+    }
+
+    // Create an OFileDataSource for writing
+    OFileDataSource out(outputShpFilename);
+    if (!out.good()) {
+        std::cerr << "Error: Could not open output file for writing: " << outputShpFilename << std::endl;
+        return false;
+    }
+
+    // Write the shape file to output
+    shapeFile.write(out);  // Pass by reference, not pointer
+
+    std::cout << "Successfully exported SHP file: " << outputShpFilename << std::endl;
+    return true;
 }
 
 // Main function unchanged

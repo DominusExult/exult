@@ -465,23 +465,53 @@ function exportSHP()
   -- Save each frame
   for i, frame in ipairs(sprite.frames) do
     local filepath = string.format("%s%d.png", basePath, i-1)
-    sprite:saveTo{
+    
+    -- Go to the frame we want to save
+    app.command.GotoFrame{frame=frame.frameNumber}
+    
+    -- Use SaveFile command to save the current frame
+    app.command.SaveFile{
       filename=filepath,
-      frame=frame.frameNumber
+      frame=frame.frameNumber,
+      slice="",
+      tag="",
+      ani_dir=0
     }
     
-    -- Write frame metadata
-    local pivot = {x = sprite.width/2, y = sprite.height/2} -- Default 
-    local selection = sprite.selection
+    -- Write frame metadata - get pivot point from selected frame's properties
+    local hotspotX, hotspotY
+    
+    -- Get current frame's pivot/center point if set
+    -- In Aseprite, pivots are stored as "centers" in frame properties
+    local sel = app.activeSprite.selection
+    local bounds = sel.bounds
+    
+    -- First try to use the values from dialog
+    hotspotX = exportSettings.hotspotX
+    hotspotY = exportSettings.hotspotY
+    
+    -- Get the sprite bounds for this specific frame
     app.command.GotoFrame{frame=frame.frameNumber}
-    -- Try to get actual pivot if available
-    local prop = app.activeSprite.frames[frame.frameNumber].pivot
-    if prop then
-      pivot.x = prop.x
-      pivot.y = prop.y
+    
+    -- Try to get frame-specific pivot if it was set (e.g. via FrameProperties)
+    -- We have to do this indirectly because pivot isn't directly accessible
+    -- through the API. We'll check if the frame has a center set in tags.
+    local tags = app.activeSprite.tags
+    for _, tag in ipairs(tags) do
+      if tag.fromFrame.frameNumber <= frame.frameNumber and 
+         tag.toFrame.frameNumber >= frame.frameNumber then
+        -- If this frame is part of a tag that has properties set,
+        -- it might have a pivot point
+        if tag.data and tag.data.center then
+          hotspotX = tag.data.center.x
+          hotspotY = tag.data.center.y
+        end
+      end
     end
-    meta:write(string.format("frame%d_hotspot_x=%d\n", i-1, pivot.x))
-    meta:write(string.format("frame%d_hotspot_y=%d\n", i-1, pivot.y))
+    
+    -- Write the metadata
+    meta:write(string.format("frame%d_hotspot_x=%d\n", i-1, hotspotX))
+    meta:write(string.format("frame%d_hotspot_y=%d\n", i-1, hotspotY))
   end
   meta:close()
   
