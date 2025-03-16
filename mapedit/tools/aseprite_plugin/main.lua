@@ -348,9 +348,20 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
           end
           meta:close()
           
+          -- Set frame center point (pivot)
           app.command.FrameProperties{
             center=Point(hotspotX, hotspotY)
           }
+          
+          -- Store hotspot data in our global table using a unique key
+          local frameKey = sprite.filename .. "_" .. tostring(frameIndex+1)
+          _G.exultFrameData[frameKey] = {
+            hotspotX = hotspotX,
+            hotspotY = hotspotY,
+            width = frameImage.width,
+            height = frameImage.height
+          }
+          debug("Stored hotspot data for " .. frameKey .. ": " .. hotspotX .. "," .. hotspotY)
         end
       end
       
@@ -462,7 +473,7 @@ function exportSHP()
   local meta = io.open(metaPath, "w")
   meta:write(string.format("num_frames=%d\n", #sprite.frames))
   
-  -- Export each frame individually using image:saveAs instead of saveCopyAs
+  -- Export each frame individually
   for i, frame in ipairs(sprite.frames) do
     local filepath = string.format("%s%d.png", basePath, i-1)
     
@@ -473,9 +484,9 @@ function exportSHP()
     local layer = sprite.layers[1]
     local cel = layer:cel(frame.frameNumber)
     
+    -- Process the frame
     if cel and cel.image then
-      -- Save the image directly using image:saveAs which doesn't prompt
-      -- This bypasses the SaveFile command completely
+      -- Save the image directly
       cel.image:saveAs(filepath)
       
       debug("Directly saved frame " .. (i-1) .. " using image:saveAs")
@@ -490,11 +501,20 @@ function exportSHP()
       debug("ERROR: Failed to save frame " .. (i-1) .. " to: " .. filepath)
     end
     
-    -- Write metadata for pivot points
+    -- Check for frame-specific metadata from import
     local hotspotX = exportSettings.hotspotX
     local hotspotY = exportSettings.hotspotY
     
-    -- Write the metadata
+    -- Try to retrieve stored hotspot data from our global table
+    local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
+    local storedData = _G.exultFrameData[frameKey]
+    if storedData then
+      hotspotX = storedData.hotspotX
+      hotspotY = storedData.hotspotY
+      debug("Using stored hotspot data for " .. frameKey .. ": " .. hotspotX .. "," .. hotspotY)
+    end
+    
+    -- Write metadata for pivot points
     meta:write(string.format("frame%d_hotspot_x=%d\n", i-1, hotspotX))
     meta:write(string.format("frame%d_hotspot_y=%d\n", i-1, hotspotY))
   end
@@ -573,6 +593,12 @@ function init(plugin)
       file_format="shp"
     }
   end
+end
+
+-- Create a global table to store frame hotspot data across the entire plugin session
+-- This isn't persistent between Aseprite sessions but works during a single session
+if not _G.exultFrameData then
+  _G.exultFrameData = {}
 end
 
 return { init=init }
