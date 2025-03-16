@@ -454,65 +454,51 @@ function exportSHP()
   local tempDir = app.fs.joinPath(app.fs.tempPath, "exult-shp-" .. os.time())
   app.fs.makeDirectory(tempDir)
   
-  -- Save frames to temporary PNG files
-  local basePath = app.fs.joinPath(tempDir, "frame")
+  -- Prepare file paths
   local metaPath = app.fs.joinPath(tempDir, "metadata.txt")
+  local basePath = app.fs.joinPath(tempDir, "frame")
   
   -- Create metadata file
   local meta = io.open(metaPath, "w")
   meta:write(string.format("num_frames=%d\n", #sprite.frames))
   
-  -- Save each frame
+  -- Export each frame individually using image:saveAs instead of saveCopyAs
   for i, frame in ipairs(sprite.frames) do
     local filepath = string.format("%s%d.png", basePath, i-1)
     
-    -- Go to the frame we want to save
+    -- Go to the frame we want to save in the original sprite
     app.command.GotoFrame{frame=frame.frameNumber}
     
-    -- Use SaveFile command to save the current frame
-    app.command.SaveFile{
-      filename=filepath,
-      frame=frame.frameNumber,
-      slice="",
-      tag="",
-      ani_dir=0
-    }
+    -- Get the cel directly
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frame.frameNumber)
     
-    -- Write frame metadata - get pivot point from selected frame's properties
-    local hotspotX, hotspotY
-    
-    -- Get current frame's pivot/center point if set
-    -- In Aseprite, pivots are stored as "centers" in frame properties
-    local sel = app.activeSprite.selection
-    local bounds = sel.bounds
-    
-    -- First try to use the values from dialog
-    hotspotX = exportSettings.hotspotX
-    hotspotY = exportSettings.hotspotY
-    
-    -- Get the sprite bounds for this specific frame
-    app.command.GotoFrame{frame=frame.frameNumber}
-    
-    -- Try to get frame-specific pivot if it was set (e.g. via FrameProperties)
-    -- We have to do this indirectly because pivot isn't directly accessible
-    -- through the API. We'll check if the frame has a center set in tags.
-    local tags = app.activeSprite.tags
-    for _, tag in ipairs(tags) do
-      if tag.fromFrame.frameNumber <= frame.frameNumber and 
-         tag.toFrame.frameNumber >= frame.frameNumber then
-        -- If this frame is part of a tag that has properties set,
-        -- it might have a pivot point
-        if tag.data and tag.data.center then
-          hotspotX = tag.data.center.x
-          hotspotY = tag.data.center.y
-        end
-      end
+    if cel and cel.image then
+      -- Save the image directly using image:saveAs which doesn't prompt
+      -- This bypasses the SaveFile command completely
+      cel.image:saveAs(filepath)
+      
+      debug("Directly saved frame " .. (i-1) .. " using image:saveAs")
+    else
+      debug("ERROR: Could not find cel/image for frame " .. (i-1))
     end
+    
+    -- Verify file was created
+    if app.fs.isFile(filepath) then
+      debug("Successfully saved frame " .. (i-1) .. " to: " .. filepath)
+    else
+      debug("ERROR: Failed to save frame " .. (i-1) .. " to: " .. filepath)
+    end
+    
+    -- Write metadata for pivot points
+    local hotspotX = exportSettings.hotspotX
+    local hotspotY = exportSettings.hotspotY
     
     -- Write the metadata
     meta:write(string.format("frame%d_hotspot_x=%d\n", i-1, hotspotX))
     meta:write(string.format("frame%d_hotspot_y=%d\n", i-1, hotspotY))
   end
+  
   meta:close()
   
   -- Create command
