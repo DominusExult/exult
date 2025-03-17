@@ -156,91 +156,55 @@ bool importSHP(const char* shpFilename, const char* outputPngFilename, const cha
         height = std::max(height, frame->get_height());
     }
 
-    if (createSeparateFiles) {
-        // Create individual PNG for each frame
-        for (int i = 0; i < frameCount; i++) {
-            Shape_frame* frame = shape.get_frame(i);
-            if (!frame) continue;
+    // Create individual PNG for each frame
+    for (int i = 0; i < frameCount; i++) {
+        Shape_frame* frame = shape.get_frame(i);
+        if (!frame) continue;
 
-            // Use baseFilename instead of outputPngFilename
-            std::string frameFilename = finalOutputBase + "_" + std::to_string(i) + ".png";
-            std::string metadataFilename = finalOutputBase + "_" + std::to_string(i) + ".meta";
+        // Use baseFilename instead of outputPngFilename
+        std::string frameFilename = finalOutputBase + "_" + std::to_string(i) + ".png";
+        std::string metadataFilename = finalOutputBase + "_" + std::to_string(i) + ".meta";
 
-            // Get frame data and dimensions - make sure to get the actual dimensions for this frame
-            int frameWidth = frame->get_width();
-            int frameHeight = frame->get_height();
-            int hotspot_x = frame->get_xleft();
-            int hotspot_y = frame->get_yabove();
-            
-            // Debug output for frame dimensions
-            std::cout << "Frame " << i << " dimensions: " << frameWidth << "x" << frameHeight << std::endl;
+        // Get frame data and dimensions - make sure to get the actual dimensions for this frame
+        int frameWidth = frame->get_width();
+        int frameHeight = frame->get_height();
+        int hotspot_x = frame->get_xleft();
+        int hotspot_y = frame->get_yabove();
+        
+        // Debug output for frame dimensions
+        std::cout << "Frame " << i << " dimensions: " << frameWidth << "x" << frameHeight << std::endl;
 
-            // Write frame info to metadata file
-            FILE* metaFile = fopen(metadataFilename.c_str(), "w");
-            if (metaFile) {
-                // Write frame dimensions to metadata
-                fprintf(metaFile, "frame_width=%d\nframe_height=%d\n", frameWidth, frameHeight);
-                
-                // Calculate hotspot and offsets
-                int xoff = -hotspot_x;
-                int yoff = -hotspot_y;
-                
-                // Write hotspot and offset info
-                fprintf(metaFile, "hotspot_x=%d\nhotspot_y=%d\n", hotspot_x, hotspot_y);
-                fprintf(metaFile, "offset_x=%d\noffset_y=%d\n", xoff, yoff);
-                fclose(metaFile);
-            }
-            
-            // Create an image buffer with the CORRECT dimensions for this frame
-            Image_buffer8 imagebuf(frameWidth, frameHeight);
-            
-            // Fill with index 255 for transparency
-            imagebuf.fill8(255);
-            
-            // Paint with x_offset=hotspot_x, y_offset=hotspot_y to position correctly
-            frame->paint(&imagebuf, hotspot_x, hotspot_y);
-            const unsigned char* pixels = imagebuf.get_bits();
-            
-            // Create PNG from frame data with the correct dimensions
-            if (!saveFrameToPNG(frameFilename.c_str(), pixels, frameWidth, frameHeight, palette)) {
-                std::cerr << "Error: Failed to save frame " << i << " to PNG" << std::endl;
-                return false;
-            }
-        }
-    } else {
-        // Create single spritesheet PNG
-        std::string metadataFilename = finalOutputBase + ".meta";
+        // Write frame info to metadata file
         FILE* metaFile = fopen(metadataFilename.c_str(), "w");
         if (metaFile) {
-            fprintf(metaFile, "num_frames=%d\nwidth=%d\nheight=%d\n",
-                    frameCount, width, height);
-
-            for (int i = 0; i < frameCount; i++) {
-                Shape_frame* frame = shape.get_frame(i);
-                if (!frame) continue;
-                
-                // Calculate hotspot and offsets
-                int hotspot_x = frame->get_xleft();
-                int hotspot_y = frame->get_yabove();
-                
-                // Use the same offset calculation for both RLE and flat frames
-                int xoff = -hotspot_x;
-                int yoff = -hotspot_y;
-                
-                // Write info to metadata file
-                fprintf(metaFile, "frame%d_hotspot_x=%d\nframe%d_hotspot_y=%d\n",
-                        i, hotspot_x, i, hotspot_y);
-                fprintf(metaFile, "frame%d_offset_x=%d\nframe%d_offset_y=%d\n",
-                        i, xoff, i, yoff);
-            }
+            // Write frame dimensions to metadata
+            fprintf(metaFile, "frame_width=%d\nframe_height=%d\n", frameWidth, frameHeight);
+            
+            // Calculate hotspot and offsets
+            int xoff = -hotspot_x;
+            int yoff = -hotspot_y;
+            
+            // Write hotspot and offset info
+            fprintf(metaFile, "hotspot_x=%d\nhotspot_y=%d\n", hotspot_x, hotspot_y);
+            fprintf(metaFile, "offset_x=%d\noffset_y=%d\n", xoff, yoff);
             fclose(metaFile);
         }
-
-        // Use finalOutputBase for the spritesheet output too
-        std::string spritesheetFilename = finalOutputBase + ".png";
         
-        std::cerr << "Spritesheet saving not yet implemented" << std::endl;
-        return false;
+        // Create an image buffer with the CORRECT dimensions for this frame
+        Image_buffer8 imagebuf(frameWidth, frameHeight);
+        
+        // Fill with index 255 for transparency
+        imagebuf.fill8(255);
+        
+        // Paint with x_offset=hotspot_x, y_offset=hotspot_y to position correctly
+        frame->paint(&imagebuf, hotspot_x, hotspot_y);
+        const unsigned char* pixels = imagebuf.get_bits();
+        
+        // Create PNG from frame data with the correct dimensions
+        if (!saveFrameToPNG(frameFilename.c_str(), pixels, frameWidth, frameHeight, palette)) {
+            std::cerr << "Error: Failed to save frame " << i << " to PNG" << std::endl;
+            return false;
+        }
     }
 
     return true;
@@ -491,7 +455,6 @@ bool exportSHP(const char* basePath, const char* outputShpFilename, bool useTran
                   << " hotspot(" << xleft << "," << yabove << ")" << std::endl;
 
         // Create Shape_frame with the correct constructor
-        // The Shape_frame constructor expects raw pixel data
         try {
             // Create the frame - must use the constructor that takes raw pixel data
             // The "true" parameter is critical - it tells Shape_frame to make a copy
@@ -522,19 +485,18 @@ bool exportSHP(const char* basePath, const char* outputShpFilename, bool useTran
     }
 
     // Write the shape file to output
-    shapeFile.write(out);  // Pass by reference, not pointer
+    shapeFile.write(out);
 
     std::cout << "Successfully exported SHP file: " << outputShpFilename << std::endl;
     return true;
 }
 
-// Main function unchanged
+// Main function
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cout << "Usage:" << std::endl;
         std::cout << "  Import mode: " << argv[0] << " import <shp_file> <output_png> [palette_file] [separate]" << std::endl;
         std::cout << "  Export mode: " << argv[0] << " export <png_file> <output_shp> [use_transparency] [hotspot_x] [hotspot_y] [metadata_file]" << std::endl;
-        std::cout << "  Experimental mode: " << argv[0] << " experimental <shp_file> <output_png>" << std::endl;
         return 1;
     }
 
@@ -551,13 +513,11 @@ int main(int argc, char* argv[]) {
 
         // Handle optional parameters
         const char* paletteFile = "";
-        bool separateFrames = true;  // Default to separate frames
+        bool separateFrames = true;  // Always export as separate frames
 
         // Parse remaining arguments
         for (int i = 4; i < argc; i++) {
-            if (strcmp(argv[i], "separate") == 0) {
-                separateFrames = true;
-            } else if (argv[i][0] != '\0') {
+            if (argv[i][0] != '\0' && strcmp(argv[i], "separate") != 0) {
                 paletteFile = argv[i];
             }
         }
@@ -565,9 +525,8 @@ int main(int argc, char* argv[]) {
         std::cout << "Loading SHP file: " << shpFilename << std::endl;
         std::cout << "Output path: " << outputPath << std::endl;
         std::cout << "Palette file: " << (strlen(paletteFile) > 0 ? paletteFile : "default") << std::endl;
-        std::cout << "Separate frames: " << (separateFrames ? "yes" : "no") << std::endl;
 
-        if (!importSHP(shpFilename, outputPath, paletteFile, separateFrames)) {
+        if (!importSHP(shpFilename, outputPath, paletteFile, true)) {
             std::cerr << "Failed to import SHP" << std::endl;
             return 1;
         }
@@ -588,9 +547,6 @@ int main(int argc, char* argv[]) {
             std::cerr << "Failed to convert PNG to SHP" << std::endl;
             return 1;
         }
-    } else if (mode == "experimental") {
-        std::cerr << "Experimental mode is not longer supported" << std::endl;
-        return 1;
     } else {
         std::cerr << "Unknown mode. Use 'import' or 'export'." << std::endl;
         return 1;
