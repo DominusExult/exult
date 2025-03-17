@@ -1,9 +1,12 @@
 Aseprite shapes plug-In
 =======================
 
-This plug-in converts a shp to png and displays all the frames. This means we are loosing the 
-offsets we have, same as when you export to png in Exult Studio.
+This plug-in converts a shp to png and displays all the frames on hitting File -> "Import SHP".
+It will also temporarily store the offsets of the shp file as a "Tag name", until you close
+the imported file. However you can also save as the asprite file format which will store the
+"Tag names".
 
+"Export SHP" will make use of the "Tag name" and save this correctly in the exported SHP.
 
 How to Build and Install
 =======================

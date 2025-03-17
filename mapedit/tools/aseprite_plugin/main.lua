@@ -5,9 +5,18 @@ local pluginName = "exult-shp"
 local pluginDir = app.fs.joinPath(app.fs.userConfigPath, "extensions", pluginName)
 local converterPath = app.fs.joinPath(pluginDir, "exult_shp")
 
--- Debug helper
+-- Debug system with toggle
+local debugEnabled = false  -- toggle debug messages
+
 local function debug(message)
-  print("[Exult SHP] " .. message)
+  if debugEnabled then
+    print("[Exult SHP] " .. message)
+  end
+end
+
+local function logError(message)
+  -- Always print errors regardless of debug setting
+  print("[Exult SHP ERROR] " .. message)
 end
 
 -- Global utility function for quoting paths with spaces
@@ -19,11 +28,26 @@ function quoteIfNeeded(path)
   end
 end
 
+-- Helper to run commands with hidden output
+function executeHidden(cmd)
+  -- Check operating system and add appropriate redirection
+  local redirectCmd
+  if app.fs.pathSeparator == "\\" then
+    -- Windows
+    redirectCmd = cmd .. " > NUL 2>&1"
+  else
+    -- Unix-like (macOS, Linux)
+    redirectCmd = cmd .. " > /dev/null 2>&1"
+  end
+  
+  debug("Executing: " .. cmd)
+  return os.execute(redirectCmd)
+end
+
 debug("Plugin initializing...")
 debug("System Information:")
 debug("OS: " .. (app.fs.pathSeparator == "/" and "Unix-like" or "Windows"))
 debug("Temp path: " .. app.fs.tempPath)
-debug("App path: " .. app.fs.appPath)
 debug("User config path: " .. app.fs.userConfigPath)
 
 debug("Converter expected at: " .. converterPath)
@@ -44,9 +68,17 @@ end
 local converterExists = app.fs.isFile(converterPath)
 debug("Converter exists: " .. tostring(converterExists))
 
+-- Make the converter executable once at startup if needed
+if converterExists and app.fs.pathSeparator == "/" then
+  -- First try chmod command - always quote the path
+  local chmodCmd = "chmod +x " .. quoteIfNeeded(converterPath)
+  debug("Executing chmod at plugin initialization: " .. chmodCmd)
+  executeHidden(chmodCmd)
+end
+
 -- Error display helper
 function showError(message)
-  debug("ERROR: " .. message)
+  logError(message)
   app.alert{
     title="Exult SHP Error",
     text=message
@@ -159,7 +191,6 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   debug("Importing SHP: " .. shpFile)
   debug("Palette: " .. (paletteFile ~= "" and paletteFile or "default"))
   debug("Output: " .. outputBasePath)
-  debug("Separate frames: " .. tostring(createSeparateFrames))
 
   -- Check if file exists
   if not app.fs.isFile(shpFile) then
@@ -179,7 +210,7 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   local actualOutputBase = outputDir .. shpBaseName
   debug("Expected output base: " .. actualOutputBase)
   
-  -- Create command
+  -- Create command - always use separate frames mode
   local cmd = quoteIfNeeded(converterPath) .. " import " .. quoteIfNeeded(shpFile) .. " " .. quoteIfNeeded(outputBasePath)
 
   -- Only add palette if it's not empty
@@ -187,98 +218,169 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     cmd = cmd .. " " .. quoteIfNeeded(paletteFile)
   end
 
-  -- Add separate parameter as the last argument
-  if createSeparateFrames then
-    cmd = cmd .. " separate"
-  end
+  -- Always use separate frames
+  cmd = cmd .. " separate"
   
   debug("Executing: " .. cmd)
   
   -- Execute command
-  local success = os.execute(cmd)
+  local success = executeHidden(cmd)
   debug("Command execution " .. (success and "succeeded" or "failed"))
 
   -- Check for output files - using the actual base path with SHP filename
   local firstFrame = actualOutputBase .. "_0.png"
-  local spritesheet = actualOutputBase .. ".png"
   
   debug("Looking for first frame at: " .. firstFrame)
   debug("File exists: " .. tostring(app.fs.isFile(firstFrame)))
   
-  if not (app.fs.isFile(firstFrame) or app.fs.isFile(spritesheet)) then
-    debug("No output files found. Using experimental mode.")
-    
-    -- Try experimental mode directly 
-    local expCmd = quoteIfNeeded(converterPath) .. 
-                 " experimental " .. 
-                 quoteIfNeeded(shpFile) .. 
-                 " " .. quoteIfNeeded(outputBasePath)
-    
-    debug("Executing experimental command: " .. expCmd)
-    os.execute(expCmd)
-    
-    -- Check again for output files
-    if not (app.fs.isFile(firstFrame) or app.fs.isFile(spritesheet)) then
-      debug("ERROR: All attempts to convert SHP file failed")
-      return false
-    end
+  if not app.fs.isFile(firstFrame) then
+    debug("ERROR: Failed to convert SHP file")
+    return false
   end
 
   -- Continue with loading the frames
   debug("Loading output files into Aseprite")
   
-  -- Load resulting PNG(s)
-  if createSeparateFrames then
-    -- First scan for all frames to find max dimensions
-    local maxWidth, maxHeight = 0, 0
-    local frameIndex = 0
+  -- First scan for all frames to find max dimensions
+  local maxWidth, maxHeight = 0, 0
+  local frameIndex = 0
+  
+  while true do
+    local framePath = actualOutputBase .. "_" .. frameIndex .. ".png"
+    if not app.fs.isFile(framePath) then break end
     
-    while true do
-      local framePath = actualOutputBase .. "_" .. frameIndex .. ".png"
-      if not app.fs.isFile(framePath) then break end
+    local image = Image{fromFile=framePath}
+    maxWidth = math.max(maxWidth, image.width)
+    maxHeight = math.max(maxHeight, image.height)
+    frameIndex = frameIndex + 1
+  end
+  
+  debug("Maximum dimensions across all frames: " .. maxWidth .. "x" .. maxHeight)
+  
+  -- Now load first frame
+  local firstFrame = actualOutputBase .. "_0.png"
+  local firstMeta = actualOutputBase .. "_0.meta"
+  
+  if not app.fs.isFile(firstFrame) then
+    showError("First frame not found: " .. firstFrame)
+    return false
+  end
+  
+  -- Open the first image as a sprite
+  debug("Opening first frame: " .. firstFrame)
+  local sprite = app.open(firstFrame)
+  if not sprite then
+    showError("Failed to open first frame")
+    return false
+  end
+  
+  -- Resize canvas to maximum dimensions if needed
+  if maxWidth > sprite.width or maxHeight > sprite.height then
+    debug("Resizing canvas to " .. maxWidth .. "x" .. maxHeight)
+    app.command.CanvasSize {
+      ui=false,
+      width=maxWidth,
+      height=maxHeight,
+      left=0,
+      top=0,
+      right=maxWidth-sprite.width, 
+      bottom=maxHeight-sprite.height
+    }
+  end
+  
+  -- Set pivot from metadata for first frame
+  if app.fs.isFile(firstMeta) then
+    local meta = io.open(firstMeta, "r")
+    if meta then
+      local hotspotX, hotspotY = 0, 0
+      for line in meta:lines() do
+        local key, value = line:match("(.+)=(.+)")
+        if key == "hotspot_x" then hotspotX = tonumber(value) end
+        if key == "hotspot_y" then hotspotY = tonumber(value) end
+      end
+      meta:close()
       
-      local image = Image{fromFile=framePath}
-      maxWidth = math.max(maxWidth, image.width)
-      maxHeight = math.max(maxHeight, image.height)
-      frameIndex = frameIndex + 1
-    end
-    
-    debug("Maximum dimensions across all frames: " .. maxWidth .. "x" .. maxHeight)
-    
-    -- Now load first frame
-    local firstFrame = actualOutputBase .. "_0.png"
-    local firstMeta = actualOutputBase .. "_0.meta"
-    
-    if not app.fs.isFile(firstFrame) then
-      showError("First frame not found: " .. firstFrame)
-      return false
-    end
-    
-    -- Open the first image as a sprite
-    debug("Opening first frame: " .. firstFrame)
-    local sprite = app.open(firstFrame)
-    if not sprite then
-      showError("Failed to open first frame")
-      return false
-    end
-    
-    -- Resize canvas to maximum dimensions if needed
-    if maxWidth > sprite.width or maxHeight > sprite.height then
-      debug("Resizing canvas to " .. maxWidth .. "x" .. maxHeight)
-      app.command.CanvasSize {
-        ui=false,
-        width=maxWidth,
-        height=maxHeight,
-        left=0,
-        top=0,
-        right=maxWidth-sprite.width, 
-        bottom=maxHeight-sprite.height
+      app.command.GotoFrame{frame=1}
+      app.command.FrameProperties{
+        center=Point(hotspotX, hotspotY)
+      }
+
+      -- Create a special tag that will store hotspot info and show up visually in Aseprite
+      local tagCreated = false
+      local tagName = "hotspot_" .. hotspotX .. "_" .. hotspotY
+      
+      debug("Creating hotspot tag: " .. tagName)
+      
+      -- Method 1: Using app.sprite:newTag()
+      if sprite.newTag then
+        local tag = sprite:newTag(1, 1)
+        if tag then
+          tag.name = tagName
+          tag.color = Color{ r=255, g=0, b=0 }
+          debug("Created tag using sprite:newTag() method")
+          tagCreated = true
+        end
+      end
+      
+      -- Method 2: Using FrameTagProperties if method 1 failed
+      if not tagCreated then
+        app.command.FrameTagProperties{
+          name=tagName,
+          color=Color{ r=255, g=0, b=0 },
+          from=1,
+          to=1
+        }
+        debug("Created tag using FrameTagProperties method")
+      end
+
+      -- Store hotspot data for first frame in global table
+      if not _G.exultFrameData then _G.exultFrameData = {} end
+      
+      -- Store with BOTH possible key formats to ensure it's found during export
+      local frameKey1 = sprite.filename .. "_1"
+      local frameKey2 = sprite.filename .. "_0"
+      _G.exultFrameData[frameKey1] = {
+        hotspotX = hotspotX,
+        hotspotY = hotspotY,
+        width = sprite.width,
+        height = sprite.height
+      }
+      _G.exultFrameData[frameKey2] = {
+        hotspotX = hotspotX,
+        hotspotY = hotspotY,
+        width = sprite.width,
+        height = sprite.height
       }
     end
+  end
+  
+  -- Now add additional frames
+  local frameIndex = 1
+  while true do
+    local framePath = actualOutputBase .. "_" .. frameIndex .. ".png"
+    local metaPath = actualOutputBase .. "_" .. frameIndex .. ".meta"
     
-    -- Set pivot from metadata for first frame
-    if app.fs.isFile(firstMeta) then
-      local meta = io.open(firstMeta, "r")
+    if not app.fs.isFile(framePath) then
+      debug("No more frames at index " .. frameIndex)
+      break
+    end
+    
+    debug("Adding frame " .. frameIndex)
+    
+    -- Load the image
+    local frameImage = Image{fromFile=framePath}
+    
+    -- Add new frame
+    sprite:newFrame()
+    app.command.GotoFrame{frame=frameIndex+1}
+    
+    -- Create new cel with this image
+    local layer = sprite.layers[1]
+    local cel = sprite:newCel(layer, frameIndex+1, frameImage, Point(0,0))
+    
+    -- Load and set pivot from metadata
+    if app.fs.isFile(metaPath) then
+      local meta = io.open(metaPath, "r")
       if meta then
         local hotspotX, hotspotY = 0, 0
         for line in meta:lines() do
@@ -288,20 +390,20 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
         end
         meta:close()
         
-        app.command.GotoFrame{frame=1}
+        -- Set frame center point (pivot)
         app.command.FrameProperties{
           center=Point(hotspotX, hotspotY)
         }
-
-        -- Create a special tag that will store hotspot info and show up visually in Aseprite
-        local tagCreated = false
-        local tagName = "hotspot_" .. hotspotX .. "_" .. hotspotY
         
-        debug("Creating hotspot tag: " .. tagName)
+        -- Create a frame-specific tag that encodes the hotspot coordinates
+        local tagName = string.format("hotspot_%d_%d_%d", frameIndex+1, hotspotX, hotspotY)
+        local tagCreated = false
+        
+        debug("Creating frame-specific tag: " .. tagName)
         
         -- Method 1: Using app.sprite:newTag()
         if sprite.newTag then
-          local tag = sprite:newTag(1, 1)
+          local tag = sprite:newTag(frameIndex+1, frameIndex+1)
           if tag then
             tag.name = tagName
             tag.color = Color{ r=255, g=0, b=0 }
@@ -315,150 +417,28 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
           app.command.FrameTagProperties{
             name=tagName,
             color=Color{ r=255, g=0, b=0 },
-            from=1,
-            to=1
+            from=frameIndex+1,
+            to=frameIndex+1
           }
           debug("Created tag using FrameTagProperties method")
         end
-
-        debug("Created tag with hotspot data: hotspot_" .. hotspotX .. "_" .. hotspotY)
         
-        -- Store hotspot data for first frame in global table
-        if not _G.exultFrameData then _G.exultFrameData = {} end
-        
-        -- Store with BOTH possible key formats to ensure it's found during export
-        local frameKey1 = sprite.filename .. "_1"
-        local frameKey2 = sprite.filename .. "_0"
-        _G.exultFrameData[frameKey1] = {
+        -- Store hotspot data in our global table
+        local frameKey = sprite.filename .. "_" .. tostring(frameIndex+1)
+        _G.exultFrameData[frameKey] = {
           hotspotX = hotspotX,
           hotspotY = hotspotY,
-          width = sprite.width,
-          height = sprite.height
+          width = frameImage.width,
+          height = frameImage.height
         }
-        _G.exultFrameData[frameKey2] = {
-          hotspotX = hotspotX,
-          hotspotY = hotspotY,
-          width = sprite.width,
-          height = sprite.height
-        }
-        
-        debug("SINGLE FRAME: Stored hotspot data with keys:")
-        debug("  " .. frameKey1 .. " = " .. hotspotX .. "," .. hotspotY)
-        debug("  " .. frameKey2 .. " = " .. hotspotX .. "," .. hotspotY)
+        debug("Stored hotspot data for " .. frameKey .. ": " .. hotspotX .. "," .. hotspotY)
       end
     end
     
-    -- Now add additional frames
-    local frameIndex = 1
-    while true do
-      local framePath = actualOutputBase .. "_" .. frameIndex .. ".png"
-      local metaPath = actualOutputBase .. "_" .. frameIndex .. ".meta"
-      
-      if not app.fs.isFile(framePath) then
-        debug("No more frames at index " .. frameIndex)
-        break
-      end
-      
-      debug("Adding frame " .. frameIndex)
-      
-      -- Load the image
-      local frameImage = Image{fromFile=framePath}
-      
-      -- Add new frame
-      sprite:newFrame()
-      app.command.GotoFrame{frame=frameIndex+1}
-      
-      -- Create new cel with this image
-      local layer = sprite.layers[1]
-      local cel = sprite:newCel(layer, frameIndex+1, frameImage, Point(0,0))
-      
-      -- Load and set pivot from metadata
-      if app.fs.isFile(metaPath) then
-        local meta = io.open(metaPath, "r")
-        if meta then
-          local hotspotX, hotspotY = 0, 0
-          for line in meta:lines() do
-            local key, value = line:match("(.+)=(.+)")
-            if key == "hotspot_x" then hotspotX = tonumber(value) end
-            if key == "hotspot_y" then hotspotY = tonumber(value) end
-          end
-          meta:close()
-          
-          -- Set frame center point (pivot)
-          app.command.FrameProperties{
-            center=Point(hotspotX, hotspotY)
-          }
-          
-          -- Create a frame-specific tag that encodes the hotspot coordinates
-          local tagName = string.format("hotspot_%d_%d_%d", frameIndex+1, hotspotX, hotspotY)
-          local tagCreated = false
-          
-          debug("Creating frame-specific tag: " .. tagName)
-          
-          -- Method 1: Using app.sprite:newTag()
-          if sprite.newTag then
-            local tag = sprite:newTag(frameIndex+1, frameIndex+1)
-            if tag then
-              tag.name = tagName
-              tag.color = Color{ r=255, g=0, b=0 }
-              debug("Created tag using sprite:newTag() method")
-              tagCreated = true
-            end
-          end
-          
-          -- Method 2: Using FrameTagProperties if method 1 failed
-          if not tagCreated then
-            app.command.FrameTagProperties{
-              name=tagName,
-              color=Color{ r=255, g=0, b=0 },
-              from=frameIndex+1,
-              to=frameIndex+1
-            }
-            debug("Created tag using FrameTagProperties method")
-          end
-          
-          -- Store hotspot data in our global table
-          local frameKey = sprite.filename .. "_" .. tostring(frameIndex+1)
-          _G.exultFrameData[frameKey] = {
-            hotspotX = hotspotX,
-            hotspotY = hotspotY,
-            width = frameImage.width,
-            height = frameImage.height
-          }
-          debug("Stored hotspot data for " .. frameKey .. ": " .. hotspotX .. "," .. hotspotY)
-        end
-      end
-      
-      frameIndex = frameIndex + 1
-    end
-    
-    return true
-  else
-    -- Convert single frame to separate frame for consistency
-    debug("Converting single-frame SHP to use frame-based format")
-    
-    -- Re-run the import process but with separate frames
-    local expCmd = quoteIfNeeded(converterPath) .. 
-                 " import " .. 
-                 quoteIfNeeded(shpFile) .. 
-                 " " .. quoteIfNeeded(outputBasePath) ..
-                 " separate" -- Force separate frames
-    
-    debug("Executing separate frame command: " .. expCmd)
-    os.execute(expCmd)
-    
-    -- Process as regular frame-based import
-    local firstFrame = actualOutputBase .. "_0.png"
-    if app.fs.isFile(firstFrame) then
-      debug("Successfully converted single-frame to frame-based format")
-      
-      -- Process exactly like multi-frame SHPs
-      return processImport(shpFile, paletteFile, outputBasePath, true)
-    else
-      showError("Failed to convert single-frame SHP")
-      return false
-    end
+    frameIndex = frameIndex + 1
   end
+  
+  return true, sprite
 end
 
 -- Export function 
@@ -488,13 +468,13 @@ function exportSHP()
   dlg:number{
     id="hotspotX",
     label="Hotspot X:",
-    text=tostring(sprite.width / 2),
+    text=tostring(math.floor(sprite.width / 2)),
     decimals=0
   }
   dlg:number{
     id="hotspotY",
     label="Hotspot Y:",
-    text=tostring(sprite.height / 2),
+    text=tostring(math.floor(sprite.height / 2)),
     decimals=0
   }
   
@@ -534,7 +514,12 @@ function exportSHP()
     showError("Please specify an output SHP file")
     return
   end
-  
+
+  if not converterExists then
+    showError("SHP converter not found at: " .. converterPath)
+    return
+  end
+
   -- Create temp directory for files
   local tempDir = app.fs.joinPath(app.fs.tempPath, "exult-shp-" .. os.time())
   app.fs.makeDirectory(tempDir)
@@ -562,16 +547,9 @@ function exportSHP()
     if cel and cel.image then
       -- Save the image directly
       cel.image:saveAs(filepath)
-      debug("Directly saved frame " .. (i-1) .. " using image:saveAs")
+      debug("Saved frame " .. (i-1))
     else
       debug("ERROR: Could not find cel/image for frame " .. (i-1))
-    end
-    
-    -- Verify file was created
-    if app.fs.isFile(filepath) then
-      debug("Successfully saved frame " .. (i-1) .. " to: " .. filepath)
-    else
-      debug("ERROR: Failed to save frame " .. (i-1) .. " to: " .. filepath)
     end
     
     -- Check for frame-specific hotspot tags using format: hotspot_FRAME#_X_Y
@@ -589,7 +567,7 @@ function exportSHP()
         hotspotX = tonumber(x)
         hotspotY = tonumber(y)
         pivotFound = true
-        debug("Found frame-specific hotspot tag: " .. tag.name .. " with values " .. hotspotX .. "," .. hotspotY)
+        debug("Found frame-specific hotspot tag for frame " .. frameNumber)
         break
       end
     end
@@ -607,7 +585,7 @@ function exportSHP()
             hotspotX = tonumber(x)
             hotspotY = tonumber(y)
             pivotFound = true
-            debug("Using legacy hotspot tag format: " .. hotspotX .. "," .. hotspotY)
+            debug("Using legacy hotspot tag format for frame " .. frameNumber)
             break
           end
         end
@@ -629,7 +607,7 @@ function exportSHP()
       if storedData then
         hotspotX = storedData.hotspotX
         hotspotY = storedData.hotspotY
-        debug("Using stored hotspot: " .. hotspotX .. "," .. hotspotY)
+        debug("Using stored hotspot for frame " .. frameNumber)
       end
     end
     
@@ -651,19 +629,8 @@ function exportSHP()
   
   debug("Executing: " .. cmd)
   
-  if converterExists then
-    debug("Converter found at: " .. converterPath)
-    
-    -- On Unix-like systems, try to ensure executable permission
-    if app.fs.pathSeparator == "/" then
-      os.execute("chmod +x " .. quoteIfNeeded(converterPath))
-    end
-  else
-    debug("Converter NOT found at: " .. converterPath)
-  end
-  
   -- Execute command
-  local success = os.execute(cmd)
+  local success = executeHidden(cmd)
   if success then
     app.alert("SHP file exported successfully.")
   else

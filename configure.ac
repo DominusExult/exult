@@ -1381,7 +1381,6 @@ usecode/ucxt/include/Makefile
 usecode/ucxt/src/Makefile
 mapedit/Makefile
 mapedit/tools/aseprite_plugin/Makefile
-mapedit/tools/aseprite_plugin/package.json
 server/Makefile
 ])
 AC_OUTPUT
