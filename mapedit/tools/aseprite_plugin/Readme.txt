@@ -1,16 +1,15 @@
+Aseprite shapes plug-In
+=======================
+
+This plug-in converts a shp to png and displays all the frames. This means we are loosing the 
+offsets we have, same as when you export to png in Exult Studio.
+
+
 How to Build and Install
-Build the converter:
-cd /Users/Dominus/Code/snapshots/exult/mapedit/tools/exult-shp/plugin
-mkdir build
-cd build
-cmake ..
-make
+=======================
+Run Exult ./configure --enable-aseprite-plugin. The only thing this checks for is the presence of libpng.
 
-Create the Aseprite extension directory:
-mkdir -p ~/.config/aseprite/extensions/exult-shp/plugin
+Then zip the plug-in exult_shape(.exe), main.lua, package.json and this Readme.txt as "exult_shp.aseprite-extension".
+Double clicking it will open Aseprite and install the plug-in.
 
-Copy the files:
-cp build/bin/exult_shp_converter ~/.config/aseprite/extensions/exult-shp/plugin/
-cp ../extension/package.json ../extension/main.lua ~/.config/aseprite/extensions/exult-shp/
-
-Restart Aseprite, and you should see the "Import SHP" and "Export SHP" commands in the File menu.
+To be safe, restart Aseprite, and you should see the "Import SHP" and "Export SHP" commands in the File menu.

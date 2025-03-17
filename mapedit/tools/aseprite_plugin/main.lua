@@ -309,6 +309,29 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
         app.command.FrameProperties{
           center=Point(hotspotX, hotspotY)
         }
+        
+        -- ADD THIS: Store hotspot data for first frame in global table
+        if not _G.exultFrameData then _G.exultFrameData = {} end
+        
+        -- Store with BOTH possible key formats to ensure it's found during export
+        local frameKey1 = sprite.filename .. "_1"
+        local frameKey2 = sprite.filename .. "_0"
+        _G.exultFrameData[frameKey1] = {
+          hotspotX = hotspotX,
+          hotspotY = hotspotY,
+          width = sprite.width,
+          height = sprite.height
+        }
+        _G.exultFrameData[frameKey2] = {
+          hotspotX = hotspotX,
+          hotspotY = hotspotY,
+          width = sprite.width,
+          height = sprite.height
+        }
+        
+        debug("SINGLE FRAME: Stored hotspot data with keys:")
+        debug("  " .. frameKey1 .. " = " .. hotspotX .. "," .. hotspotY)
+        debug("  " .. frameKey2 .. " = " .. hotspotX .. "," .. hotspotY)
       end
     end
     
@@ -370,21 +393,31 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     
     return true
   else
-    -- Single spritesheet image
-    local spritesheet = outputBasePath .. ".png"
-    local metaFile = outputBasePath .. ".meta"
+    -- Convert single frame to separate frame for consistency
+    debug("Converting single-frame SHP to use frame-based format")
     
-    debug("Looking for spritesheet at: " .. spritesheet)
+    -- Re-run the import process but with separate frames
+    local expCmd = quoteIfNeeded(converterPath) .. 
+                 " import " .. 
+                 quoteIfNeeded(shpFile) .. 
+                 " " .. quoteIfNeeded(outputBasePath) ..
+                 " separate" -- Force separate frames
     
-    if app.fs.isFile(spritesheet) then
-      debug("Opening spritesheet")
-      app.open(spritesheet)
-      return true
+    debug("Executing separate frame command: " .. expCmd)
+    os.execute(expCmd)
+    
+    -- Process as regular frame-based import
+    local firstFrame = actualOutputBase .. "_0.png"
+    if app.fs.isFile(firstFrame) then
+      debug("Successfully converted single-frame to frame-based format")
+      
+      -- Process exactly like multi-frame SHPs
+      return processImport(shpFile, paletteFile, outputBasePath, true)
     else
-      showError("Failed to find output files.")
+      showError("Failed to convert single-frame SHP")
       return false
     end
-  end
+  end  -- Add this line to close processImport function
 end
 
 -- Export function 
@@ -505,13 +538,70 @@ function exportSHP()
     local hotspotX = exportSettings.hotspotX
     local hotspotY = exportSettings.hotspotY
     
-    -- Try to retrieve stored hotspot data from our global table
+    -- Special handling to make single frames work correctly
     local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
     local storedData = _G.exultFrameData[frameKey]
+
+    -- If not found and this is a single frame SHP, try with key "_1" which is how it's stored
+    if not storedData and #sprite.frames == 1 then
+      -- For single-frame SHPs, we need to try with this specific key format
+      frameKey = sprite.filename .. "_1"
+      storedData = _G.exultFrameData[frameKey]
+      if storedData then
+        debug("Found hotspot data for single-frame using key: " .. frameKey)
+      end
+    end
+
+    -- Add extensive debugging to track exactly what's happening
+    debug("========= FRAME HOTSPOT DEBUG =========")
+    debug("Frame number: " .. i .. " of " .. #sprite.frames)
+    debug("Frame frameNumber: " .. frame.frameNumber)
+    debug("Dialog hotspot values: " .. exportSettings.hotspotX .. "," .. exportSettings.hotspotY)
+
+    -- Check all keys in the global table
+    debug("All keys in _G.exultFrameData:")
+    for key, value in pairs(_G.exultFrameData or {}) do
+      debug("  " .. key .. " => hotspot(" .. value.hotspotX .. "," .. value.hotspotY .. ")")
+    end
+
+    -- Try each possible key format
+    local possibleKeys = {
+      sprite.filename .. "_" .. frame.frameNumber,
+      sprite.filename .. "_" .. i,
+      sprite.filename .. "_1",
+      app.fs.filePathAndTitle(sprite.filename) .. "_" .. frame.frameNumber,
+      app.fs.filePathAndTitle(sprite.filename) .. "_" .. i,
+      app.fs.filePathAndTitle(sprite.filename) .. "_1"
+    }
+
+    debug("Checking possible keys:")
+    for _, key in ipairs(possibleKeys) do
+      debug("  Trying key: " .. key .. " => " .. 
+            (_G.exultFrameData[key] and "FOUND" or "not found"))
+    end
+
+    -- Special handling to make single frames work correctly
+    local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
+    debug("Initial frameKey: " .. frameKey) 
+    local storedData = _G.exultFrameData[frameKey]
+
+    -- If not found and this is a single frame SHP, try with key "_1" which is how it's stored
+    if not storedData and #sprite.frames == 1 then
+      -- For single-frame SHPs, we need to try with this specific key format
+      frameKey = sprite.filename .. "_1"
+      debug("Trying single-frame key: " .. frameKey)
+      storedData = _G.exultFrameData[frameKey]
+      if storedData then
+        debug("Found hotspot data for single-frame using key: " .. frameKey)
+      end
+    end
+    
     if storedData then
       hotspotX = storedData.hotspotX
       hotspotY = storedData.hotspotY
-      debug("Using stored hotspot data for " .. frameKey .. ": " .. hotspotX .. "," .. hotspotY)
+      debug("Using stored hotspot data: " .. hotspotX .. "," .. hotspotY)
+    else
+      debug("No stored hotspot data found, using dialog values: " .. hotspotX .. "," .. hotspotY)
     end
     
     -- Write metadata for pivot points
