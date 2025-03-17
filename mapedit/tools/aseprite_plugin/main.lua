@@ -10,13 +10,21 @@ local function debug(message)
   print("[Exult SHP] " .. message)
 end
 
+-- Global utility function for quoting paths with spaces
+function quoteIfNeeded(path)
+  if path:find(" ") then
+    return '"' .. path .. '"'
+  else
+    return path
+  end
+end
+
 debug("Plugin initializing...")
 debug("System Information:")
 debug("OS: " .. (app.fs.pathSeparator == "/" and "Unix-like" or "Windows"))
 debug("Temp path: " .. app.fs.tempPath)
 debug("App path: " .. app.fs.appPath)
 debug("User config path: " .. app.fs.userConfigPath)
-debug("Current directory: " .. (os.getenv("PWD") or "unknown"))
 
 debug("Converter expected at: " .. converterPath)
 
@@ -36,6 +44,7 @@ end
 local converterExists = app.fs.isFile(converterPath)
 debug("Converter exists: " .. tostring(converterExists))
 
+-- Error display helper
 function showError(message)
   debug("ERROR: " .. message)
   app.alert{
@@ -51,8 +60,6 @@ function registerSHPFormat()
               "\nSHP files cannot be opened until this is fixed.")
     return false
   end
-  
-  -- Register SHP format through the importSHP function
   return true
 end
 
@@ -172,27 +179,6 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   local actualOutputBase = outputDir .. shpBaseName
   debug("Expected output base: " .. actualOutputBase)
   
-  -- Add file size check
-  local fileSize = 0
-  local file = io.open(shpFile, "rb")
-  if file then
-    file:seek("end")
-    fileSize = file:seek()
-    file:close()
-    debug("SHP file size: " .. fileSize .. " bytes")
-  else
-    debug("Could not open SHP file for size check")
-  end
-  
-  -- Quote paths with spaces
-  local function quoteIfNeeded(path)
-    if path:find(" ") then
-      return '"' .. path .. '"'
-    else
-      return path
-    end
-  end
-
   -- Create command
   local cmd = quoteIfNeeded(converterPath) .. " import " .. quoteIfNeeded(shpFile) .. " " .. quoteIfNeeded(outputBasePath)
 
@@ -232,9 +218,6 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     os.execute(expCmd)
     
     -- Check again for output files
-    debug("After experimental mode, looking for: " .. firstFrame)
-    debug("File exists: " .. tostring(app.fs.isFile(firstFrame)))
-    
     if not (app.fs.isFile(firstFrame) or app.fs.isFile(spritesheet)) then
       debug("ERROR: All attempts to convert SHP file failed")
       return false
@@ -309,8 +292,38 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
         app.command.FrameProperties{
           center=Point(hotspotX, hotspotY)
         }
+
+        -- Create a special tag that will store hotspot info and show up visually in Aseprite
+        local tagCreated = false
+        local tagName = "hotspot_" .. hotspotX .. "_" .. hotspotY
         
-        -- ADD THIS: Store hotspot data for first frame in global table
+        debug("Creating hotspot tag: " .. tagName)
+        
+        -- Method 1: Using app.sprite:newTag()
+        if sprite.newTag then
+          local tag = sprite:newTag(1, 1)
+          if tag then
+            tag.name = tagName
+            tag.color = Color{ r=255, g=0, b=0 }
+            debug("Created tag using sprite:newTag() method")
+            tagCreated = true
+          end
+        end
+        
+        -- Method 2: Using FrameTagProperties if method 1 failed
+        if not tagCreated then
+          app.command.FrameTagProperties{
+            name=tagName,
+            color=Color{ r=255, g=0, b=0 },
+            from=1,
+            to=1
+          }
+          debug("Created tag using FrameTagProperties method")
+        end
+
+        debug("Created tag with hotspot data: hotspot_" .. hotspotX .. "_" .. hotspotY)
+        
+        -- Store hotspot data for first frame in global table
         if not _G.exultFrameData then _G.exultFrameData = {} end
         
         -- Store with BOTH possible key formats to ensure it's found during export
@@ -376,7 +389,35 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
             center=Point(hotspotX, hotspotY)
           }
           
-          -- Store hotspot data in our global table using a unique key
+          -- Create a frame-specific tag that encodes the hotspot coordinates
+          local tagName = string.format("hotspot_%d_%d_%d", frameIndex+1, hotspotX, hotspotY)
+          local tagCreated = false
+          
+          debug("Creating frame-specific tag: " .. tagName)
+          
+          -- Method 1: Using app.sprite:newTag()
+          if sprite.newTag then
+            local tag = sprite:newTag(frameIndex+1, frameIndex+1)
+            if tag then
+              tag.name = tagName
+              tag.color = Color{ r=255, g=0, b=0 }
+              debug("Created tag using sprite:newTag() method")
+              tagCreated = true
+            end
+          end
+          
+          -- Method 2: Using FrameTagProperties if method 1 failed
+          if not tagCreated then
+            app.command.FrameTagProperties{
+              name=tagName,
+              color=Color{ r=255, g=0, b=0 },
+              from=frameIndex+1,
+              to=frameIndex+1
+            }
+            debug("Created tag using FrameTagProperties method")
+          end
+          
+          -- Store hotspot data in our global table
           local frameKey = sprite.filename .. "_" .. tostring(frameIndex+1)
           _G.exultFrameData[frameKey] = {
             hotspotX = hotspotX,
@@ -417,7 +458,7 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
       showError("Failed to convert single-frame SHP")
       return false
     end
-  end  -- Add this line to close processImport function
+  end
 end
 
 -- Export function 
@@ -442,7 +483,7 @@ function exportSHP()
     id="useTransparency",
     label="Transparency:",
     text="Use transparent color (index 0)",
-    selected=true
+    selected=false
   }
   dlg:number{
     id="hotspotX",
@@ -521,7 +562,6 @@ function exportSHP()
     if cel and cel.image then
       -- Save the image directly
       cel.image:saveAs(filepath)
-      
       debug("Directly saved frame " .. (i-1) .. " using image:saveAs")
     else
       debug("ERROR: Could not find cel/image for frame " .. (i-1))
@@ -534,74 +574,63 @@ function exportSHP()
       debug("ERROR: Failed to save frame " .. (i-1) .. " to: " .. filepath)
     end
     
-    -- Check for frame-specific metadata from import
+    -- Check for frame-specific hotspot tags using format: hotspot_FRAME#_X_Y
+    local frameNumber = frame.frameNumber
+    local pivotFound = false
     local hotspotX = exportSettings.hotspotX
     local hotspotY = exportSettings.hotspotY
     
-    -- Special handling to make single frames work correctly
-    local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
-    local storedData = _G.exultFrameData[frameKey]
-
-    -- If not found and this is a single frame SHP, try with key "_1" which is how it's stored
-    if not storedData and #sprite.frames == 1 then
-      -- For single-frame SHPs, we need to try with this specific key format
-      frameKey = sprite.filename .. "_1"
-      storedData = _G.exultFrameData[frameKey]
-      if storedData then
-        debug("Found hotspot data for single-frame using key: " .. frameKey)
-      end
-    end
-
-    -- Add extensive debugging to track exactly what's happening
-    debug("========= FRAME HOTSPOT DEBUG =========")
-    debug("Frame number: " .. i .. " of " .. #sprite.frames)
-    debug("Frame frameNumber: " .. frame.frameNumber)
-    debug("Dialog hotspot values: " .. exportSettings.hotspotX .. "," .. exportSettings.hotspotY)
-
-    -- Check all keys in the global table
-    debug("All keys in _G.exultFrameData:")
-    for key, value in pairs(_G.exultFrameData or {}) do
-      debug("  " .. key .. " => hotspot(" .. value.hotspotX .. "," .. value.hotspotY .. ")")
-    end
-
-    -- Try each possible key format
-    local possibleKeys = {
-      sprite.filename .. "_" .. frame.frameNumber,
-      sprite.filename .. "_" .. i,
-      sprite.filename .. "_1",
-      app.fs.filePathAndTitle(sprite.filename) .. "_" .. frame.frameNumber,
-      app.fs.filePathAndTitle(sprite.filename) .. "_" .. i,
-      app.fs.filePathAndTitle(sprite.filename) .. "_1"
-    }
-
-    debug("Checking possible keys:")
-    for _, key in ipairs(possibleKeys) do
-      debug("  Trying key: " .. key .. " => " .. 
-            (_G.exultFrameData[key] and "FOUND" or "not found"))
-    end
-
-    -- Special handling to make single frames work correctly
-    local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
-    debug("Initial frameKey: " .. frameKey) 
-    local storedData = _G.exultFrameData[frameKey]
-
-    -- If not found and this is a single frame SHP, try with key "_1" which is how it's stored
-    if not storedData and #sprite.frames == 1 then
-      -- For single-frame SHPs, we need to try with this specific key format
-      frameKey = sprite.filename .. "_1"
-      debug("Trying single-frame key: " .. frameKey)
-      storedData = _G.exultFrameData[frameKey]
-      if storedData then
-        debug("Found hotspot data for single-frame using key: " .. frameKey)
+    -- First check all tags that mention this specific frame number
+    for _, tag in ipairs(sprite.tags) do
+      -- Look for pattern hotspot_FRAMENUMBER_X_Y
+      local tagFrameNum, x, y = tag.name:match("^hotspot_(%d+)_(%d+)_(%d+)$")
+      
+      if tagFrameNum and tonumber(tagFrameNum) == frameNumber then
+        hotspotX = tonumber(x)
+        hotspotY = tonumber(y)
+        pivotFound = true
+        debug("Found frame-specific hotspot tag: " .. tag.name .. " with values " .. hotspotX .. "," .. hotspotY)
+        break
       end
     end
     
-    if storedData then
-      hotspotX = storedData.hotspotX
-      hotspotY = storedData.hotspotY
-      debug("Using stored hotspot data: " .. hotspotX .. "," .. hotspotY)
-    else
-      debug("No stored hotspot data found, using dialog values: " .. hotspotX .. "," .. hotspotY)
+    -- If no frame-specific tag was found, check the old formats
+    if not pivotFound then
+      for _, tag in ipairs(sprite.tags) do
+        -- Only check tags that apply to this frame
+        if tag.fromFrame.frameNumber <= frameNumber and 
+           tag.toFrame.frameNumber >= frameNumber then
+           
+          -- Old format: hotspot_X_Y
+          local x, y = tag.name:match("^hotspot_(%d+)_(%d+)$")
+          if x and y then
+            hotspotX = tonumber(x)
+            hotspotY = tonumber(y)
+            pivotFound = true
+            debug("Using legacy hotspot tag format: " .. hotspotX .. "," .. hotspotY)
+            break
+          end
+        end
+      end
+    end
+    
+    -- Only fall back to global table if no tag was found
+    if not pivotFound and _G.exultFrameData then
+      -- Special handling for single frames
+      local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
+      local storedData = _G.exultFrameData[frameKey]
+      
+      -- For single-frame SHPs, try with key "_1"
+      if not storedData and #sprite.frames == 1 then
+        frameKey = sprite.filename .. "_1"
+        storedData = _G.exultFrameData[frameKey]
+      end
+      
+      if storedData then
+        hotspotX = storedData.hotspotX
+        hotspotY = storedData.hotspotY
+        debug("Using stored hotspot: " .. hotspotX .. "," .. hotspotY)
+      end
     end
     
     -- Write metadata for pivot points
@@ -610,15 +639,6 @@ function exportSHP()
   end
   
   meta:close()
-  
-  -- Create command
-  local function quoteIfNeeded(path)
-    if path:find(" ") then
-      return '"' .. path .. '"'
-    else
-      return path
-    end
-  end
   
   local cmd = quoteIfNeeded(converterPath) .. 
              " export " .. 
@@ -686,7 +706,6 @@ function init(plugin)
 end
 
 -- Create a global table to store frame hotspot data across the entire plugin session
--- This isn't persistent between Aseprite sessions but works during a single session
 if not _G.exultFrameData then
   _G.exultFrameData = {}
 end
