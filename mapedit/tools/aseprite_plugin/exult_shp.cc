@@ -397,6 +397,9 @@ bool exportSHP(
 
 	// Load each PNG frame and create Shape_frames
 	for (int frameIdx = 0; frameIdx < numFrames; frameIdx++) {
+		volatile int volatileIdx
+				= frameIdx;    // Use a separate volatile variable
+
 		// Construct the PNG filename
 		std::string pngFilename
 				= std::string(basePath) + std::to_string(frameIdx) + ".png";
@@ -452,7 +455,7 @@ bool exportSHP(
 		std::vector<unsigned char> imageData(width * height);
 
 		for (int y = 0; y < height; y++) {
-			row_pointers[y] = const_cast<png_bytep>(&imageData[y * width]);
+			row_pointers[y] = &imageData[y * width];
 		}
 
 		png_read_image(png_ptr, row_pointers.data());
