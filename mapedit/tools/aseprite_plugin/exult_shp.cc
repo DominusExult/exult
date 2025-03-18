@@ -182,8 +182,8 @@ bool importSHP(
 		// dimensions for this frame
 		int frameWidth  = frame->get_width();
 		int frameHeight = frame->get_height();
-		int hotspot_x   = frame->get_xleft();
-		int hotspot_y   = frame->get_yabove();
+		int offset_x    = frame->get_xleft();
+		int offset_y    = frame->get_yabove();
 
 		// Debug output for frame dimensions
 		std::cout << "Frame " << i << " dimensions: " << frameWidth << "x"
@@ -196,14 +196,7 @@ bool importSHP(
 			fprintf(metaFile, "frame_width=%d\nframe_height=%d\n", frameWidth,
 					frameHeight);
 
-			// Calculate hotspot and offsets
-			int xoff = -hotspot_x;
-			int yoff = -hotspot_y;
-
-			// Write hotspot and offset info
-			fprintf(metaFile, "hotspot_x=%d\nhotspot_y=%d\n", hotspot_x,
-					hotspot_y);
-			fprintf(metaFile, "offset_x=%d\noffset_y=%d\n", xoff, yoff);
+			fprintf(metaFile, "offset_x=%d\noffset_y=%d\n", offset_x, offset_y);
 			fclose(metaFile);
 		}
 
@@ -213,9 +206,9 @@ bool importSHP(
 		// Fill with index 255 for transparency
 		imagebuf.fill8(255);
 
-		// Paint with x_offset=hotspot_x, y_offset=hotspot_y to position
+		// Paint with x_offset=offset_x, y_offset=offset_y to position
 		// correctly
-		frame->paint(&imagebuf, hotspot_x, hotspot_y);
+		frame->paint(&imagebuf, offset_x, offset_y);
 		const unsigned char* pixels = imagebuf.get_bits();
 
 		// Create PNG from frame data with the correct dimensions
@@ -319,12 +312,12 @@ bool saveFrameToPNG(
 // Function to export PNG to SHP
 bool exportSHP(
 		const char* basePath, const char* outputShpFilename,
-		int defaultHotspotX, int defaultHotspotY, const char* metadataFile) {
+		int defaultOffsetX, int defaultOffsetY, const char* metadataFile) {
 	std::cout << "Exporting to SHP: " << outputShpFilename << std::endl;
 	std::cout << "Using base path: " << basePath << std::endl;
 	std::cout << "Using metadata file: " << metadataFile << std::endl;
 
-	// Read metadata to get number of frames and hotspots
+	// Read metadata to get number of frames and offsets
 	FILE* metaFile = fopen(metadataFile, "r");
 	if (!metaFile) {
 		std::cerr << "Error: Unable to open metadata file: " << metadataFile
@@ -335,7 +328,7 @@ bool exportSHP(
 	// Parse metadata
 	int                              numFrames = 0;
 	char                             line[256];
-	std::vector<std::pair<int, int>> hotspots;
+	std::vector<std::pair<int, int>> offsets;
 
 	while (fgets(line, sizeof(line), metaFile)) {
 		// Remove newline if present
@@ -346,26 +339,26 @@ bool exportSHP(
 
 		if (strncmp(line, "num_frames=", 11) == 0) {
 			numFrames = atoi(line + 11);
-			hotspots.resize(
+			offsets.resize(
 					numFrames,
-					std::make_pair(defaultHotspotX, defaultHotspotY));
+					std::make_pair(defaultOffsetX, defaultOffsetY));
 		} else if (
-				strncmp(line, "frame", 5) == 0 && strstr(line, "hotspot_x=")) {
-			// Parse frame index and hotspot_x value
+				strncmp(line, "frame", 5) == 0 && strstr(line, "offset_x=")) {
+			// Parse frame index and offset_x value
 			int frameIndex = 0;
-			int hotspotX   = 0;
-			sscanf(line, "frame%d_hotspot_x=%d", &frameIndex, &hotspotX);
+			int offsetX   = 0;
+			sscanf(line, "frame%d_offset_x=%d", &frameIndex, &offsetX);
 			if (frameIndex >= 0 && frameIndex < numFrames) {
-				hotspots[frameIndex].first = hotspotX;
+				offsets[frameIndex].first = offsetX;
 			}
 		} else if (
-				strncmp(line, "frame", 5) == 0 && strstr(line, "hotspot_y=")) {
-			// Parse frame index and hotspot_y value
+				strncmp(line, "frame", 5) == 0 && strstr(line, "offset_y=")) {
+			// Parse frame index and offset_y value
 			int frameIndex = 0;
-			int hotspotY   = 0;
-			sscanf(line, "frame%d_hotspot_y=%d", &frameIndex, &hotspotY);
+			int offsetY   = 0;
+			sscanf(line, "frame%d_offset_y=%d", &frameIndex, &offsetY);
 			if (frameIndex >= 0 && frameIndex < numFrames) {
-				hotspots[frameIndex].second = hotspotY;
+				offsets[frameIndex].second = offsetY;
 			}
 		}
 	}
@@ -478,12 +471,12 @@ bool exportSHP(
 			}
 		}
 
-		// Get hotspot for this frame
-		int xleft  = hotspots[frameIdx].first;
-		int yabove = hotspots[frameIdx].second;
+		// Get offset for this frame
+		int xleft  = offsets[frameIdx].first;
+		int yabove = offsets[frameIdx].second;
 
 		std::cout << "Frame " << frameIdx << ": " << width << "x" << height
-				  << " hotspot(" << xleft << "," << yabove << ")" << std::endl;
+				  << " offset(" << xleft << "," << yabove << ")" << std::endl;
 
 		// Create Shape_frame with the correct constructor
 		try {
@@ -492,7 +485,7 @@ bool exportSHP(
 			std::unique_ptr<Shape_frame> frame = std::make_unique<Shape_frame>(
 					pixels,           // raw pixel data
 					width, height,    // dimensions
-					xleft, yabove,    // hotspot
+					xleft, yabove,    // offsets
 					true              // make a copy of the data
 			);
 
@@ -534,7 +527,7 @@ int main(int argc, char* argv[]) {
 				  << std::endl;
 		std::cout << "  Export mode: " << argv[0]
 				  << " export <png_file> <output_shp> [use_transparency] "
-					 "[hotspot_x] [hotspot_y] [metadata_file]"
+					 "[offset_x] [offset_y] [metadata_file]"
 				  << std::endl;
 		return 1;
 	}
@@ -576,12 +569,12 @@ int main(int argc, char* argv[]) {
 	} else if (mode == "export") {
 		const char* pngFilename  = argv[2];
 		const char* shpOutput    = argv[3];
-		int         hotspotX     = (argc > 5) ? atoi(argv[5]) : 0;
-		int         hotspotY     = (argc > 6) ? atoi(argv[6]) : 0;
+		int         offsetX      = (argc > 5) ? atoi(argv[5]) : 0;
+		int         offsetY      = (argc > 6) ? atoi(argv[6]) : 0;
 		const char* metadataFile = (argc > 7) ? argv[7] : nullptr;
 
 		if (exportSHP(
-					pngFilename, shpOutput, hotspotX, hotspotY, metadataFile)) {
+					pngFilename, shpOutput, offsetX, offsetY, metadataFile)) {
 			std::cout << "Successfully converted PNG to SHP" << std::endl;
 			return 0;
 		} else {

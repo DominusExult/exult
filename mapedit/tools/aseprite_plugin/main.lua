@@ -285,24 +285,24 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   if app.fs.isFile(firstMeta) then
     local meta = io.open(firstMeta, "r")
     if meta then
-      local hotspotX, hotspotY = 0, 0
+      local offsetX, offsetY = 0, 0
       for line in meta:lines() do
         local key, value = line:match("(.+)=(.+)")
-        if key == "hotspot_x" then hotspotX = tonumber(value) end
-        if key == "hotspot_y" then hotspotY = tonumber(value) end
+        if key == "offset_x" then offsetX = tonumber(value) end
+        if key == "offset_y" then offsetY = tonumber(value) end
       end
       meta:close()
       
       app.command.GotoFrame{frame=1}
       app.command.FrameProperties{
-        center=Point(hotspotX, hotspotY)
+        center=Point(offsetX, offsetY)
       }
 
-      -- Create a special tag that will store hotspot info and show up visually in Aseprite
+      -- Create a special tag that will store offset info and show up visually in Aseprite
       local tagCreated = false
-      local tagName = "hotspot_" .. hotspotX .. "_" .. hotspotY
+      local tagName = "offset_" .. offsetX .. "_" .. offsetY
       
-      debug("Creating hotspot tag: " .. tagName)
+      debug("Creating offset tag: " .. tagName)
       
       -- Method 1: Using app.sprite:newTag()
       if sprite.newTag then
@@ -326,21 +326,21 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
         debug("Created tag using FrameTagProperties method")
       end
 
-      -- Store hotspot data for first frame in global table
+      -- Store offset data for first frame in global table
       if not _G.exultFrameData then _G.exultFrameData = {} end
       
       -- Store with BOTH possible key formats to ensure it's found during export
       local frameKey1 = sprite.filename .. "_1"
       local frameKey2 = sprite.filename .. "_0"
       _G.exultFrameData[frameKey1] = {
-        hotspotX = hotspotX,
-        hotspotY = hotspotY,
+        offsetX = offsetX,
+        offsetY = offsetY,
         width = sprite.width,
         height = sprite.height
       }
       _G.exultFrameData[frameKey2] = {
-        hotspotX = hotspotX,
-        hotspotY = hotspotY,
+        offsetX = offsetX,
+        offsetY = offsetY,
         width = sprite.width,
         height = sprite.height
       }
@@ -375,21 +375,21 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     if app.fs.isFile(metaPath) then
       local meta = io.open(metaPath, "r")
       if meta then
-        local hotspotX, hotspotY = 0, 0
+        local offsetX, offsetY = 0, 0
         for line in meta:lines() do
           local key, value = line:match("(.+)=(.+)")
-          if key == "hotspot_x" then hotspotX = tonumber(value) end
-          if key == "hotspot_y" then hotspotY = tonumber(value) end
+          if key == "offset_x" then offsetX = tonumber(value) end
+          if key == "offset_y" then offsetY = tonumber(value) end
         end
         meta:close()
         
         -- Set frame center point (pivot)
         app.command.FrameProperties{
-          center=Point(hotspotX, hotspotY)
+          center=Point(offsetX, offsetY)
         }
         
-        -- Create a frame-specific tag that encodes the hotspot coordinates
-        local tagName = string.format("hotspot_%d_%d_%d", frameIndex+1, hotspotX, hotspotY)
+        -- Create a frame-specific tag that encodes the offset coordinates
+        local tagName = string.format("offset_%d_%d_%d", frameIndex+1, offsetX, offsetY)
         local tagCreated = false
         
         debug("Creating frame-specific tag: " .. tagName)
@@ -416,15 +416,15 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
           debug("Created tag using FrameTagProperties method")
         end
         
-        -- Store hotspot data in our global table
+        -- Store offset data in our global table
         local frameKey = sprite.filename .. "_" .. tostring(frameIndex+1)
         _G.exultFrameData[frameKey] = {
-          hotspotX = hotspotX,
-          hotspotY = hotspotY,
+          offsetX = offsetX,
+          offsetY = offsetY,
           width = frameImage.width,
           height = frameImage.height
         }
-        debug("Stored hotspot data for " .. frameKey .. ": " .. hotspotX .. "," .. hotspotY)
+        debug("Stored offset data for " .. frameKey .. ": " .. offsetX .. "," .. offsetY)
       end
     end
     
@@ -434,7 +434,20 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   return true, sprite
 end
 
--- Export function 
+-- Add this helper function to check for offset tags
+function spriteHasOffsetTags(sprite)
+  if not sprite or not sprite.tags then return false end
+  
+  for _, tag in ipairs(sprite.tags) do
+    -- Check for any tag starting with "offset_"
+    if tag.name:match("^offset_") then
+      return true
+    end
+  end
+  return false
+end
+
+-- Modify the export dialog function
 function exportSHP()
   -- Get active sprite
   local sprite = app.activeSprite
@@ -442,6 +455,13 @@ function exportSHP()
     showError("No active sprite to export")
     return
   end
+  
+  -- Check if sprite has offset tags
+  local hasOffsetTags = spriteHasOffsetTags(sprite)
+  
+  -- Default offset values (used regardless of visibility)
+  local defaultOffsetX = math.floor(sprite.width / 2)
+  local defaultOffsetY = math.floor(sprite.height / 2)
   
   -- Show export dialog
   local dlg = Dialog("Export SHP File")
@@ -452,18 +472,27 @@ function exportSHP()
     filetypes={"shp"},
     focus=true
   }
-  dlg:number{
-    id="hotspotX",
-    label="Hotspot X:",
-    text=tostring(math.floor(sprite.width / 2)),
-    decimals=0
-  }
-  dlg:number{
-    id="hotspotY",
-    label="Hotspot Y:",
-    text=tostring(math.floor(sprite.height / 2)),
-    decimals=0
-  }
+  
+  -- Only show offset fields if no tags exist
+  if not hasOffsetTags then
+    dlg:number{
+      id="offsetX",
+      label="Offset X:",
+      text=tostring(defaultOffsetX),
+      decimals=0
+    }
+    dlg:number{
+      id="offsetY",
+      label="Offset Y:",
+      text=tostring(defaultOffsetY),
+      decimals=0
+    }
+  else
+    dlg:label{
+      id="usingTags",
+      text="Using offset data from frame tags"
+    }
+  end
   
   -- Store dialog result in outer scope
   local dialogResult = false
@@ -475,8 +504,16 @@ function exportSHP()
     onclick=function()
       dialogResult = true
       exportSettings.outFile = dlg.data.outFile
-      exportSettings.hotspotX = dlg.data.hotspotX
-      exportSettings.hotspotY = dlg.data.hotspotY
+      
+      -- Get offset values from dialog if shown, otherwise use defaults
+      if not hasOffsetTags then
+        exportSettings.offsetX = dlg.data.offsetX
+        exportSettings.offsetY = dlg.data.offsetY
+      else
+        exportSettings.offsetX = defaultOffsetX
+        exportSettings.offsetY = defaultOffsetY
+      end
+      
       dlg:close()
     end
   }
@@ -538,22 +575,22 @@ function exportSHP()
       debug("ERROR: Could not find cel/image for frame " .. (i-1))
     end
     
-    -- Check for frame-specific hotspot tags using format: hotspot_FRAME#_X_Y
+    -- Check for frame-specific offset tags using format: offset_FRAME#_X_Y
     local frameNumber = frame.frameNumber
     local pivotFound = false
-    local hotspotX = exportSettings.hotspotX
-    local hotspotY = exportSettings.hotspotY
+    local offsetX = exportSettings.offsetX
+    local offsetY = exportSettings.offsetY
     
     -- First check all tags that mention this specific frame number
     for _, tag in ipairs(sprite.tags) do
-      -- Look for pattern hotspot_FRAMENUMBER_X_Y
-      local tagFrameNum, x, y = tag.name:match("^hotspot_(%d+)_(%d+)_(%d+)$")
+      -- Look for pattern offset_FRAMENUMBER_X_Y
+      local tagFrameNum, x, y = tag.name:match("^offset_(%d+)_(%d+)_(%d+)$")
       
       if tagFrameNum and tonumber(tagFrameNum) == frameNumber then
-        hotspotX = tonumber(x)
-        hotspotY = tonumber(y)
+        offsetX = tonumber(x)
+        offsetY = tonumber(y)
         pivotFound = true
-        debug("Found frame-specific hotspot tag for frame " .. frameNumber)
+        debug("Found frame-specific offset tag for frame " .. frameNumber)
         break
       end
     end
@@ -565,13 +602,13 @@ function exportSHP()
         if tag.fromFrame.frameNumber <= frameNumber and 
            tag.toFrame.frameNumber >= frameNumber then
            
-          -- Old format: hotspot_X_Y
-          local x, y = tag.name:match("^hotspot_(%d+)_(%d+)$")
+          -- Old format: offset_X_Y
+          local x, y = tag.name:match("^offset_(%d+)_(%d+)$")
           if x and y then
-            hotspotX = tonumber(x)
-            hotspotY = tonumber(y)
+            offsetX = tonumber(x)
+            offsetY = tonumber(y)
             pivotFound = true
-            debug("Using legacy hotspot tag format for frame " .. frameNumber)
+            debug("Using legacy offset tag format for frame " .. frameNumber)
             break
           end
         end
@@ -591,15 +628,15 @@ function exportSHP()
       end
       
       if storedData then
-        hotspotX = storedData.hotspotX
-        hotspotY = storedData.hotspotY
-        debug("Using stored hotspot for frame " .. frameNumber)
+        offsetX = storedData.offsetX
+        offsetY = storedData.offsetY
+        debug("Using stored offset for frame " .. frameNumber)
       end
     end
     
     -- Write metadata for pivot points
-    meta:write(string.format("frame%d_hotspot_x=%d\n", i-1, hotspotX))
-    meta:write(string.format("frame%d_hotspot_y=%d\n", i-1, hotspotY))
+    meta:write(string.format("frame%d_offset_x=%d\n", i-1, offsetX))
+    meta:write(string.format("frame%d_offset_y=%d\n", i-1, offsetY))
   end
   
   meta:close()
@@ -609,8 +646,8 @@ function exportSHP()
              quoteIfNeeded(basePath) .. 
              " " .. quoteIfNeeded(exportSettings.outFile) .. 
              " 0" ..
-             " " .. exportSettings.hotspotX ..
-             " " .. exportSettings.hotspotY ..
+             " " .. exportSettings.offsetX ..
+             " " .. exportSettings.offsetY ..
              " " .. quoteIfNeeded(metaPath)
   
   debug("Executing: " .. cmd)
@@ -658,7 +695,7 @@ function init(plugin)
   end
 end
 
--- Create a global table to store frame hotspot data across the entire plugin session
+-- Create a global table to store frame offset data across the entire plugin session
 if not _G.exultFrameData then
   _G.exultFrameData = {}
 end
