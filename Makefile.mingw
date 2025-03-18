@@ -575,9 +575,10 @@ endif
 u7shp$(EXEEXT) : mapedit/u7shp.o $(FILE_OBJS) shapes/vgafile.o imagewin/ibuf8.o imagewin/imagebuf.o
 	$(CXX) $(LDFLAGS) -o $(@) $+ $(subst -lgexiv2,,$(GIMP_LIBS)) -mwindows
 
-mapedit/tools/aseprite_plugin/exult_shp$(EXEEXT): mapedit/tools/aseprite_plugin/exult_shp.cc
+mapedit/tools/aseprite_plugin/exult_shp$(EXEEXT): mapedit/tools/aseprite_plugin/exult_shp.cc \
+	$(FILE_OBJS) shapes/vgafile.o imagewin/ibuf8.o imagewin/imagebuf.o
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c -o mapedit/tools/aseprite_plugin/exult_shp.o $<
-	$(CXX) $(LDFLAGS) -o $(@) mapedit/tools/aseprite_plugin/exult_shp.o $(FILE_OBJS) shapes/vgafile.o
+	$(CXX) $(LDFLAGS) -o $@ mapedit/tools/aseprite_plugin/exult_shp.o $(FILE_OBJS) shapes/vgafile.o \
 	imagewin/ibuf8.o imagewin/imagebuf.o -lpng -mwindows
 
 install: $(EXEC)
