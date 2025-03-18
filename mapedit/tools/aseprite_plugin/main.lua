@@ -1,5 +1,4 @@
 -- Exult SHP Format Extension for Aseprite
--- Based on code from the Exult project
 
 local pluginName = "exult-shp"
 local pluginDir = app.fs.joinPath(app.fs.userConfigPath, "extensions", pluginName)
@@ -70,7 +69,6 @@ debug("Converter exists: " .. tostring(converterExists))
 
 -- Make the converter executable once at startup if needed
 if converterExists and app.fs.pathSeparator == "/" then
-  -- First try chmod command - always quote the path
   local chmodCmd = "chmod +x " .. quoteIfNeeded(converterPath)
   debug("Executing chmod at plugin initialization: " .. chmodCmd)
   executeHidden(chmodCmd)
@@ -234,7 +232,7 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   -- Continue with loading the frames
   debug("Loading output files into Aseprite")
   
-  -- First scan for all frames to find max dimensions
+  -- First scan for all frames to find max dimensions for canvas
   local maxWidth, maxHeight = 0, 0
   local frameIndex = 0
   
@@ -456,14 +454,20 @@ function exportSHP()
     return
   end
   
-  -- Check if sprite has offset tags
+  -- Check if sprite uses indexed color mode
+  if sprite.colorMode ~= ColorMode.INDEXED then
+    showError("SHP format needs an indexed palette. Convert your sprite to Indexed color mode first.")
+    return
+  end
+  
+  -- Check if sprite has any offset tags
   local hasOffsetTags = spriteHasOffsetTags(sprite)
   
-  -- Default offset values (used regardless of visibility)
+  -- Default offset values for fallback
   local defaultOffsetX = math.floor(sprite.width / 2)
   local defaultOffsetY = math.floor(sprite.height / 2)
   
-  -- Show export dialog
+  -- Show initial export dialog - simplified without offset fields
   local dlg = Dialog("Export SHP File")
   dlg:file{
     id="outFile",
@@ -473,24 +477,16 @@ function exportSHP()
     focus=true
   }
   
-  -- Only show offset fields if no tags exist
-  if not hasOffsetTags then
-    dlg:number{
-      id="offsetX",
-      label="Offset X:",
-      text=tostring(defaultOffsetX),
-      decimals=0
-    }
-    dlg:number{
-      id="offsetY",
-      label="Offset Y:",
-      text=tostring(defaultOffsetY),
-      decimals=0
-    }
-  else
+  -- Just show informational text about offset data source
+  if hasOffsetTags then
     dlg:label{
       id="usingTags",
       text="Using offset data from frame tags"
+    }
+  else
+    dlg:label{
+      id="noTags",
+      text="You will be prompted for offset values for frames without tags"
     }
   end
   
@@ -504,16 +500,6 @@ function exportSHP()
     onclick=function()
       dialogResult = true
       exportSettings.outFile = dlg.data.outFile
-      
-      -- Get offset values from dialog if shown, otherwise use defaults
-      if not hasOffsetTags then
-        exportSettings.offsetX = dlg.data.offsetX
-        exportSettings.offsetY = dlg.data.offsetY
-      else
-        exportSettings.offsetX = defaultOffsetX
-        exportSettings.offsetY = defaultOffsetY
-      end
-      
       dlg:close()
     end
   }
@@ -555,84 +541,149 @@ function exportSHP()
   local meta = io.open(metaPath, "w")
   meta:write(string.format("num_frames=%d\n", #sprite.frames))
   
-  -- Export each frame individually
+  -- Track frame offsets
+  local frameOffsets = {}
+  
+  -- First pass: Check which frames need offset prompts
   for i, frame in ipairs(sprite.frames) do
-    local filepath = string.format("%s%d.png", basePath, i-1)
-    
-    -- Go to the frame we want to save in the original sprite
-    app.command.GotoFrame{frame=frame.frameNumber}
-    
-    -- Get the cel directly
-    local layer = sprite.layers[1]
-    local cel = layer:cel(frame.frameNumber)
-    
-    -- Process the frame
-    if cel and cel.image then
-      -- Save the image directly
-      cel.image:saveAs(filepath)
-      debug("Saved frame " .. (i-1))
-    else
-      debug("ERROR: Could not find cel/image for frame " .. (i-1))
-    end
-    
-    -- Check for frame-specific offset tags using format: offset_FRAME#_X_Y
     local frameNumber = frame.frameNumber
-    local pivotFound = false
-    local offsetX = exportSettings.offsetX
-    local offsetY = exportSettings.offsetY
+    local offsetNeeded = true
     
-    -- First check all tags that mention this specific frame number
+    -- Check for frame-specific offset tags
     for _, tag in ipairs(sprite.tags) do
       -- Look for pattern offset_FRAMENUMBER_X_Y
       local tagFrameNum, x, y = tag.name:match("^offset_(%d+)_(%d+)_(%d+)$")
       
       if tagFrameNum and tonumber(tagFrameNum) == frameNumber then
-        offsetX = tonumber(x)
-        offsetY = tonumber(y)
-        pivotFound = true
-        debug("Found frame-specific offset tag for frame " .. frameNumber)
+        frameOffsets[i] = {
+          x = tonumber(x),
+          y = tonumber(y)
+        }
+        offsetNeeded = false
         break
       end
     end
     
-    -- If no frame-specific tag was found, check the old formats
-    if not pivotFound then
+    -- Check other tag formats if still needed
+    if offsetNeeded then
       for _, tag in ipairs(sprite.tags) do
-        -- Only check tags that apply to this frame
         if tag.fromFrame.frameNumber <= frameNumber and 
            tag.toFrame.frameNumber >= frameNumber then
            
           -- Old format: offset_X_Y
           local x, y = tag.name:match("^offset_(%d+)_(%d+)$")
           if x and y then
-            offsetX = tonumber(x)
-            offsetY = tonumber(y)
-            pivotFound = true
-            debug("Using legacy offset tag format for frame " .. frameNumber)
+            frameOffsets[i] = {
+              x = tonumber(x),
+              y = tonumber(y)
+            }
+            offsetNeeded = false
             break
           end
         end
       end
     end
     
-    -- Only fall back to global table if no tag was found
-    if not pivotFound and _G.exultFrameData then
-      -- Special handling for single frames
-      local frameKey = sprite.filename .. "_" .. tostring(frame.frameNumber)
+    -- Check global table if still needed
+    if offsetNeeded and _G.exultFrameData then
+      local frameKey = sprite.filename .. "_" .. tostring(frameNumber)
       local storedData = _G.exultFrameData[frameKey]
       
-      -- For single-frame SHPs, try with key "_1"
-      if not storedData and #sprite.frames == 1 then
-        frameKey = sprite.filename .. "_1"
-        storedData = _G.exultFrameData[frameKey]
-      end
-      
       if storedData then
-        offsetX = storedData.offsetX
-        offsetY = storedData.offsetY
-        debug("Using stored offset for frame " .. frameNumber)
+        frameOffsets[i] = {
+          x = storedData.offsetX,
+          y = storedData.offsetY
+        }
+        offsetNeeded = false
       end
     end
+    
+    -- Mark for prompting if still needed
+    if offsetNeeded then
+      frameOffsets[i] = {
+        needsPrompt = true
+      }
+    end
+  end
+  
+  -- Second pass: Prompt for missing offsets
+  for i, frameData in ipairs(frameOffsets) do
+    if frameData.needsPrompt then
+      -- Go to the frame to show it to the user
+      app.command.GotoFrame{frame=sprite.frames[i].frameNumber}
+      
+      -- Create prompt dialog for this specific frame
+      local frameDlg = Dialog("Frame " .. i .. " Offset")
+      
+      frameDlg:label{
+        id="info",
+        text="Set offset for frame " .. i .. " of " .. #sprite.frames
+      }
+      
+      frameDlg:number{
+        id="offsetX",
+        label="Offset X:",
+        text=tostring(defaultOffsetX),
+        decimals=0
+      }
+      
+      frameDlg:number{
+        id="offsetY",
+        label="Offset Y:",
+        text=tostring(defaultOffsetY),
+        decimals=0
+      }
+      
+      local frameResult = false
+      
+      frameDlg:button{
+        id="ok",
+        text="OK",
+        onclick=function()
+          frameResult = true
+          frameOffsets[i] = {
+            x = frameDlg.data.offsetX,
+            y = frameDlg.data.offsetY
+          }
+          frameDlg:close()
+        end
+      }
+      
+      -- Show dialog and wait for result
+      frameDlg:show{wait=true}
+      
+      -- If user cancelled, use defaults
+      if not frameResult then
+        frameOffsets[i] = {
+          x = defaultOffsetX,
+          y = defaultOffsetY
+        }
+      end
+    end
+  end
+  
+  -- Now export each frame with its determined offset
+  for i, frame in ipairs(sprite.frames) do
+    local filepath = string.format("%s%d.png", basePath, i-1)
+    
+    -- Go to the frame we want to save
+    app.command.GotoFrame{frame=frame.frameNumber}
+    
+    -- Get the cel directly
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frame.frameNumber)
+    
+    -- Save the frame
+    if cel and cel.image then
+      cel.image:saveAs(filepath)
+      debug("Saved frame " .. (i-1))
+    else
+      debug("ERROR: Could not find cel/image for frame " .. (i-1))
+    end
+    
+    -- Get the offset for this frame
+    local offsetX = frameOffsets[i].x
+    local offsetY = frameOffsets[i].y
     
     -- Write metadata for pivot points
     meta:write(string.format("frame%d_offset_x=%d\n", i-1, offsetX))
@@ -641,13 +692,18 @@ function exportSHP()
   
   meta:close()
   
+  -- Use first frame's offset as default for the converter command
+  local cmdOffsetX = frameOffsets[1].x or defaultOffsetX
+  local cmdOffsetY = frameOffsets[1].y or defaultOffsetY
+  
+  -- Create and execute the export command
   local cmd = quoteIfNeeded(converterPath) .. 
              " export " .. 
              quoteIfNeeded(basePath) .. 
              " " .. quoteIfNeeded(exportSettings.outFile) .. 
              " 0" ..
-             " " .. exportSettings.offsetX ..
-             " " .. exportSettings.offsetY ..
+             " " .. cmdOffsetX ..
+             " " .. cmdOffsetY ..
              " " .. quoteIfNeeded(metaPath)
   
   debug("Executing: " .. cmd)

@@ -1,3 +1,23 @@
+/*
+ *  exult_shape.cc - Aseprite plugin for SHP files
+ *
+ *  Copyright (C) 2025  The Exult Team
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+ */
+
 #include "U7obj.h"
 #include "databuf.h"
 #include "ibuf8.h"
@@ -311,8 +331,8 @@ bool saveFrameToPNG(
 
 // Function to export PNG to SHP
 bool exportSHP(
-		const char* basePath, const char* outputShpFilename,
-		int defaultOffsetX, int defaultOffsetY, const char* metadataFile) {
+		const char* basePath, const char* outputShpFilename, int defaultOffsetX,
+		int defaultOffsetY, const char* metadataFile) {
 	std::cout << "Exporting to SHP: " << outputShpFilename << std::endl;
 	std::cout << "Using base path: " << basePath << std::endl;
 	std::cout << "Using metadata file: " << metadataFile << std::endl;
@@ -340,13 +360,12 @@ bool exportSHP(
 		if (strncmp(line, "num_frames=", 11) == 0) {
 			numFrames = atoi(line + 11);
 			offsets.resize(
-					numFrames,
-					std::make_pair(defaultOffsetX, defaultOffsetY));
+					numFrames, std::make_pair(defaultOffsetX, defaultOffsetY));
 		} else if (
 				strncmp(line, "frame", 5) == 0 && strstr(line, "offset_x=")) {
 			// Parse frame index and offset_x value
 			int frameIndex = 0;
-			int offsetX   = 0;
+			int offsetX    = 0;
 			sscanf(line, "frame%d_offset_x=%d", &frameIndex, &offsetX);
 			if (frameIndex >= 0 && frameIndex < numFrames) {
 				offsets[frameIndex].first = offsetX;
@@ -355,7 +374,7 @@ bool exportSHP(
 				strncmp(line, "frame", 5) == 0 && strstr(line, "offset_y=")) {
 			// Parse frame index and offset_y value
 			int frameIndex = 0;
-			int offsetY   = 0;
+			int offsetY    = 0;
 			sscanf(line, "frame%d_offset_y=%d", &frameIndex, &offsetY);
 			if (frameIndex >= 0 && frameIndex < numFrames) {
 				offsets[frameIndex].second = offsetY;
@@ -573,8 +592,7 @@ int main(int argc, char* argv[]) {
 		int         offsetY      = (argc > 6) ? atoi(argv[6]) : 0;
 		const char* metadataFile = (argc > 7) ? argv[7] : nullptr;
 
-		if (exportSHP(
-					pngFilename, shpOutput, offsetX, offsetY, metadataFile)) {
+		if (exportSHP(pngFilename, shpOutput, offsetX, offsetY, metadataFile)) {
 			std::cout << "Successfully converted PNG to SHP" << std::endl;
 			return 0;
 		} else {
