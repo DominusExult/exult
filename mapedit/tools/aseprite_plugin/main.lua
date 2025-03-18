@@ -126,12 +126,6 @@ function importSHP(filename)
     label="Palette File (optional):",
     open=true
   }
-  dlg:check{
-    id="separateFrames",
-    label="Create Separate Frames:",
-    text="Import as multiple frames",
-    selected=true
-  }
   
   -- Store dialog result in outer scope
   local dialogResult = false
@@ -144,7 +138,6 @@ function importSHP(filename)
       dialogResult = true
       importSettings.shpFile = dlg.data.shpFile
       importSettings.paletteFile = dlg.data.paletteFile
-      importSettings.separateFrames = dlg.data.separateFrames
       dlg:close()
     end
   }
@@ -179,7 +172,7 @@ function importSHP(filename)
   return processImport(importSettings.shpFile, 
                       importSettings.paletteFile or "", 
                       outputBasePath, 
-                      importSettings.separateFrames)
+                      true)
 end
 
 function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrames)
@@ -459,12 +452,6 @@ function exportSHP()
     filetypes={"shp"},
     focus=true
   }
-  dlg:check{
-    id="useTransparency",
-    label="Transparency:",
-    text="Use transparent color (index 0)",
-    selected=false
-  }
   dlg:number{
     id="hotspotX",
     label="Hotspot X:",
@@ -488,7 +475,6 @@ function exportSHP()
     onclick=function()
       dialogResult = true
       exportSettings.outFile = dlg.data.outFile
-      exportSettings.useTransparency = dlg.data.useTransparency
       exportSettings.hotspotX = dlg.data.hotspotX
       exportSettings.hotspotY = dlg.data.hotspotY
       dlg:close()
@@ -622,7 +608,7 @@ function exportSHP()
              " export " .. 
              quoteIfNeeded(basePath) .. 
              " " .. quoteIfNeeded(exportSettings.outFile) .. 
-             " " .. (exportSettings.useTransparency and "1" or "0") ..
+             " 0" ..
              " " .. exportSettings.hotspotX ..
              " " .. exportSettings.hotspotY ..
              " " .. quoteIfNeeded(metaPath)

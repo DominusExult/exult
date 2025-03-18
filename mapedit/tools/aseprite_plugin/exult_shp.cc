@@ -87,7 +87,7 @@ bool saveFrameToPNG(
 // Function to import SHP to PNG
 bool importSHP(
 		const char* shpFilename, const char* outputPngFilename,
-		const char* paletteFile, bool createSeparateFiles) {
+		const char* paletteFile) {
 	// Load palette - either from specified file or use default game palette
 	unsigned char palette[768];
 
@@ -319,8 +319,7 @@ bool saveFrameToPNG(
 // Function to export PNG to SHP
 bool exportSHP(
 		const char* basePath, const char* outputShpFilename,
-		bool useTransparency, int defaultHotspotX, int defaultHotspotY,
-		const char* metadataFile) {
+		int defaultHotspotX, int defaultHotspotY, const char* metadataFile) {
 	std::cout << "Exporting to SHP: " << outputShpFilename << std::endl;
 	std::cout << "Using base path: " << basePath << std::endl;
 	std::cout << "Using metadata file: " << metadataFile << std::endl;
@@ -385,10 +384,10 @@ bool exportSHP(
 	shapeFile.resize(numFrames);
 
 	// Load each PNG frame and create Shape_frames
-	for (int i = 0; i < numFrames; i++) {
+	for (int frameIdx = 0; frameIdx < numFrames; frameIdx++) {
 		// Construct the PNG filename
 		std::string pngFilename
-				= std::string(basePath) + std::to_string(i) + ".png";
+				= std::string(basePath) + std::to_string(frameIdx) + ".png";
 
 		// Open the PNG file
 		FILE* fp = fopen(pngFilename.c_str(), "rb");
@@ -426,11 +425,10 @@ bool exportSHP(
 		int width      = png_get_image_width(png_ptr, info_ptr);
 		int height     = png_get_image_height(png_ptr, info_ptr);
 		int color_type = png_get_color_type(png_ptr, info_ptr);
-		int bit_depth  = png_get_bit_depth(png_ptr, info_ptr);
 
 		// Make sure it's an indexed color image
 		if (color_type != PNG_COLOR_TYPE_PALETTE) {
-			std::cerr << "Error: Frame " << i
+			std::cerr << "Error: Frame " << frameIdx
 					  << " is not an indexed color image" << std::endl;
 			png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
 			fclose(fp);
@@ -442,7 +440,7 @@ bool exportSHP(
 		std::vector<unsigned char> imageData(width * height);
 
 		for (int y = 0; y < height; y++) {
-			row_pointers[y] = (png_bytep)&imageData[y * width];
+			row_pointers[y] = const_cast<png_bytep>(&imageData[y * width]);
 		}
 
 		png_read_image(png_ptr, row_pointers.data());
@@ -463,7 +461,8 @@ bool exportSHP(
 
 		// Process the image data for Shape_frame creation
 		unsigned char transparentIndex
-				= 255;    // Default transparent index in Exult
+				= 255;    // Default transparent index in shapes
+		ignore_unused_variable_warning(transparentIndex);
 
 		// Create a buffer for the frame data - DON'T pre-fill with transparency
 		unsigned char* pixels = new unsigned char[width * height];
@@ -474,24 +473,22 @@ bool exportSHP(
 				unsigned char pixel = imageData[y * width + x];
 
 				// Store the original pixel value - Shape_frame expects index
-				// 255 to be transparent We shouldn't pre-fill or modify
-				// non-transparent pixels
+				// 255 to be transparent
 				pixels[y * width + x] = pixel;
 			}
 		}
 
 		// Get hotspot for this frame
-		int xleft  = hotspots[i].first;
-		int yabove = hotspots[i].second;
+		int xleft  = hotspots[frameIdx].first;
+		int yabove = hotspots[frameIdx].second;
 
-		std::cout << "Frame " << i << ": " << width << "x" << height
+		std::cout << "Frame " << frameIdx << ": " << width << "x" << height
 				  << " hotspot(" << xleft << "," << yabove << ")" << std::endl;
 
 		// Create Shape_frame with the correct constructor
 		try {
 			// Create the frame - must use the constructor that takes raw pixel
-			// data The "true" parameter is critical - it tells Shape_frame to
-			// make a copy
+			// data
 			std::unique_ptr<Shape_frame> frame = std::make_unique<Shape_frame>(
 					pixels,           // raw pixel data
 					width, height,    // dimensions
@@ -500,7 +497,7 @@ bool exportSHP(
 			);
 
 			// Add the frame to the shape file
-			shapeFile.set_frame(std::move(frame), i);
+			shapeFile.set_frame(std::move(frame), frameIdx);
 		} catch (std::exception& e) {
 			std::cerr << "Exception creating Shape_frame: " << e.what()
 					  << std::endl;
@@ -533,7 +530,7 @@ int main(int argc, char* argv[]) {
 	if (argc < 3) {
 		std::cout << "Usage:" << std::endl;
 		std::cout << "  Import mode: " << argv[0]
-				  << " import <shp_file> <output_png> [palette_file] [separate]"
+				  << " import <shp_file> <output_png> [palette_file]"
 				  << std::endl;
 		std::cout << "  Export mode: " << argv[0]
 				  << " export <png_file> <output_shp> [use_transparency] "
@@ -556,7 +553,6 @@ int main(int argc, char* argv[]) {
 
 		// Handle optional parameters
 		const char* paletteFile = "";
-		bool separateFrames     = true;    // Always export as separate frames
 
 		// Parse remaining arguments
 		for (int i = 4; i < argc; i++) {
@@ -571,23 +567,21 @@ int main(int argc, char* argv[]) {
 				  << (strlen(paletteFile) > 0 ? paletteFile : "default")
 				  << std::endl;
 
-		if (!importSHP(shpFilename, outputPath, paletteFile, true)) {
+		if (!importSHP(shpFilename, outputPath, paletteFile)) {
 			std::cerr << "Failed to import SHP" << std::endl;
 			return 1;
 		}
 
 		return 0;
 	} else if (mode == "export") {
-		const char* pngFilename = argv[2];
-		const char* shpOutput   = argv[3];
-		bool useTransparency = (argc > 4) ? (strcmp(argv[4], "1") == 0) : true;
-		int  hotspotX        = (argc > 5) ? atoi(argv[5]) : 0;
-		int  hotspotY        = (argc > 6) ? atoi(argv[6]) : 0;
+		const char* pngFilename  = argv[2];
+		const char* shpOutput    = argv[3];
+		int         hotspotX     = (argc > 5) ? atoi(argv[5]) : 0;
+		int         hotspotY     = (argc > 6) ? atoi(argv[6]) : 0;
 		const char* metadataFile = (argc > 7) ? argv[7] : nullptr;
 
 		if (exportSHP(
-					pngFilename, shpOutput, useTransparency, hotspotX, hotspotY,
-					metadataFile)) {
+					pngFilename, shpOutput, hotspotX, hotspotY, metadataFile)) {
 			std::cout << "Successfully converted PNG to SHP" << std::endl;
 			return 0;
 		} else {
