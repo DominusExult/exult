@@ -83,6 +83,23 @@ function showError(message)
   }
 end
 
+-- Don't detect Animation sequences when opening files
+function disableAnimationDetection()
+  -- Store the original preference value if it exists
+  if app.preferences and app.preferences.open_file and app.preferences.open_file.open_sequence ~= nil then
+    _G._originalSeqPref = app.preferences.open_file.open_sequence
+    -- Set to 2 which means "skip the prompt without loading as animation"
+    app.preferences.open_file.open_sequence = 2
+  end
+end
+
+function restoreAnimationDetection()
+  -- Restore the original preference if we saved it
+  if app.preferences and app.preferences.open_file and _G._originalSeqPref ~= nil then
+    app.preferences.open_file.open_sequence = _G._originalSeqPref
+  end
+end
+
 -- File format registration function
 function registerSHPFormat()
   if not converterExists then
@@ -259,7 +276,16 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   
   -- Open the first image as a sprite
   debug("Opening first frame: " .. firstFrame)
+  
+  -- Disable animation detection before opening file
+  disableAnimationDetection()
+  
+  -- Open the file normally
   local sprite = app.open(firstFrame)
+  
+  -- Restore original settings
+  restoreAnimationDetection()
+  
   if not sprite then
     showError("Failed to open first frame")
     return false
@@ -755,5 +781,6 @@ end
 if not _G.exultFrameData then
   _G.exultFrameData = {}
 end
+
 
 return { init=init }
