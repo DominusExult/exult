@@ -291,6 +291,9 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     return false
   end
   
+   -- Immediately rename the file to the SHP filename to avoid save prompts later
+   sprite.filename = shpFile
+
   -- Resize canvas to maximum dimensions if needed
   if maxWidth > sprite.width or maxHeight > sprite.height then
     debug("Resizing canvas to " .. maxWidth .. "x" .. maxHeight)
@@ -317,57 +320,12 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
       end
       meta:close()
       
-      app.command.GotoFrame{frame=1}
-      app.command.FrameProperties{
-        center=Point(offsetX, offsetY)
-      }
-
-      -- Create a special tag that will store offset info and show up visually in Aseprite
-      local tagCreated = false
-      local tagName = "offset_" .. offsetX .. "_" .. offsetY
-      
-      debug("Creating offset tag: " .. tagName)
-      
-      -- Method 1: Using app.sprite:newTag()
-      if sprite.newTag then
-        local tag = sprite:newTag(1, 1)
-        if tag then
-          tag.name = tagName
-          tag.color = Color{ r=255, g=0, b=0 }
-          debug("Created tag using sprite:newTag() method")
-          tagCreated = true
-        end
+      -- Store offset in cel's user data for the first frame
+      local firstFrameCel = sprite.layers[1]:cel(1)
+      if firstFrameCel then
+        firstFrameCel.data = string.format("offset:%d,%d", offsetX or 0, offsetY or 0)
+        debug("Stored offset data in first frame cel user data: " .. firstFrameCel.data)
       end
-      
-      -- Method 2: Using FrameTagProperties if method 1 failed
-      if not tagCreated then
-        app.command.FrameTagProperties{
-          name=tagName,
-          color=Color{ r=255, g=0, b=0 },
-          from=1,
-          to=1
-        }
-        debug("Created tag using FrameTagProperties method")
-      end
-
-      -- Store offset data for first frame in global table
-      if not _G.exultFrameData then _G.exultFrameData = {} end
-      
-      -- Store with BOTH possible key formats to ensure it's found during export
-      local frameKey1 = sprite.filename .. "_1"
-      local frameKey2 = sprite.filename .. "_0"
-      _G.exultFrameData[frameKey1] = {
-        offsetX = offsetX,
-        offsetY = offsetY,
-        width = sprite.width,
-        height = sprite.height
-      }
-      _G.exultFrameData[frameKey2] = {
-        offsetX = offsetX,
-        offsetY = offsetY,
-        width = sprite.width,
-        height = sprite.height
-      }
     end
   end
   
@@ -387,8 +345,10 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     -- Load the image
     local frameImage = Image{fromFile=framePath}
     
-    -- Add new frame
-    sprite:newFrame()
+    -- Create a new frame (user will need to handle the prompt)
+    local newFrame = sprite:newFrame()
+    
+    -- Continue with the rest of the process
     app.command.GotoFrame{frame=frameIndex+1}
     
     -- Create new cel with this image
@@ -396,10 +356,11 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     local cel = sprite:newCel(layer, frameIndex+1, frameImage, Point(0,0))
     
     -- Load and set pivot from metadata
+    local offsetX, offsetY = 0, 0  -- Define these at frame loop level, not inside the if block
+    
     if app.fs.isFile(metaPath) then
       local meta = io.open(metaPath, "r")
       if meta then
-        local offsetX, offsetY = 0, 0
         for line in meta:lines() do
           local key, value = line:match("(.+)=(.+)")
           if key == "offset_x" then offsetX = tonumber(value) end
@@ -412,63 +373,32 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
           center=Point(offsetX, offsetY)
         }
         
-        -- Create a frame-specific tag that encodes the offset coordinates
-        local tagName = string.format("offset_%d_%d_%d", frameIndex+1, offsetX, offsetY)
-        local tagCreated = false
-        
-        debug("Creating frame-specific tag: " .. tagName)
-        
-        -- Method 1: Using app.sprite:newTag()
-        if sprite.newTag then
-          local tag = sprite:newTag(frameIndex+1, frameIndex+1)
-          if tag then
-            tag.name = tagName
-            tag.color = Color{ r=255, g=0, b=0 }
-            debug("Created tag using sprite:newTag() method")
-            tagCreated = true
-          end
+        -- Store offset data in cel's user data
+        if cel then
+          cel.data = string.format("offset:%d,%d", offsetX, offsetY)
+          debug("Stored offset data in cel user data: " .. cel.data)
         end
-        
-        -- Method 2: Using FrameTagProperties if method 1 failed
-        if not tagCreated then
-          app.command.FrameTagProperties{
-            name=tagName,
-            color=Color{ r=255, g=0, b=0 },
-            from=frameIndex+1,
-            to=frameIndex+1
-          }
-          debug("Created tag using FrameTagProperties method")
-        end
-        
-        -- Store offset data in our global table
-        local frameKey = sprite.filename .. "_" .. tostring(frameIndex+1)
-        _G.exultFrameData[frameKey] = {
-          offsetX = offsetX,
-          offsetY = offsetY,
-          width = frameImage.width,
-          height = frameImage.height
-        }
-        debug("Stored offset data for " .. frameKey .. ": " .. offsetX .. "," .. offsetY)
       end
     end
     
     frameIndex = frameIndex + 1
   end
   
-  return true, sprite
-end
-
--- Add this helper function to check for offset tags
-function spriteHasOffsetTags(sprite)
-  if not sprite or not sprite.tags then return false end
-  
-  for _, tag in ipairs(sprite.tags) do
-    -- Check for any tag starting with "offset_"
-    if tag.name:match("^offset_") then
-      return true
+  -- Set layer edges to be visible after import
+  if app.preferences then
+    -- Use the correct document preferences API
+    local docPref = app.preferences.document(sprite)
+    if docPref and docPref.show then
+      docPref.show.layer_edges = true
+      debug("Enabled layer edges display for this document")
+    else
+      debug("Could not set layer_edges preference (editor section not found in document preferences)")
     end
+  else
+    debug("Could not set layer_edges preference (preferences not available)")
   end
-  return false
+  
+  return true, sprite
 end
 
 -- Modify the export dialog function
@@ -480,14 +410,23 @@ function exportSHP()
     return
   end
   
+  -- Store original default extension preference
+  local originalDefaultExt = nil
+  if app.preferences and app.preferences.save_file then
+    originalDefaultExt = app.preferences.save_file.default_extension
+    -- Set SHP as default extension during export
+    app.preferences.save_file.default_extension = "shp"
+    debug("Temporarily set default image extension to SHP")
+  end
+  
   -- Check if sprite uses indexed color mode
   if sprite.colorMode ~= ColorMode.INDEXED then
     showError("SHP format needs an indexed palette. Convert your sprite to Indexed color mode first.")
     return
   end
   
-  -- Check if sprite has any offset tags
-  local hasOffsetTags = spriteHasOffsetTags(sprite)
+  -- Check if sprite has any offset data in cels
+  local hasOffsetData = spriteHasCelOffsetData(sprite)
   
   -- Default offset values for fallback
   local defaultOffsetX = math.floor(sprite.width / 2)
@@ -504,15 +443,15 @@ function exportSHP()
   }
   
   -- Just show informational text about offset data source
-  if hasOffsetTags then
+  if hasOffsetData then
     dlg:label{
-      id="usingTags",
-      text="Using offset data from frame tags"
+      id="usingData",
+      text="Using offset data from cels"
     }
   else
     dlg:label{
-      id="noTags",
-      text="You will be prompted for offset values for frames without tags"
+      id="noData",
+      text="You will be prompted for offset values for frames without stored offsets"
     }
   end
   
@@ -570,65 +509,35 @@ function exportSHP()
   -- Track frame offsets
   local frameOffsets = {}
   
-  -- First pass: Check which frames need offset prompts
+  -- First pass: Check which frames have offset data in cels
   for i, frame in ipairs(sprite.frames) do
     local frameNumber = frame.frameNumber
     local offsetNeeded = true
     
-    -- Check for frame-specific offset tags
-    for _, tag in ipairs(sprite.tags) do
-      -- Look for pattern offset_FRAMENUMBER_X_Y
-      local tagFrameNum, x, y = tag.name:match("^offset_(%d+)_(%d+)_(%d+)$")
+    -- Check for offset data in cel user data
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frameNumber)
+    
+    if cel and cel.data then
+      -- Try to extract offset from cel.data
+      local x, y = cel.data:match("offset:(%d+),(%d+)")
       
-      if tagFrameNum and tonumber(tagFrameNum) == frameNumber then
+      if x and y then
         frameOffsets[i] = {
           x = tonumber(x),
           y = tonumber(y)
         }
         offsetNeeded = false
-        break
+        debug("Found offset in cel user data for frame " .. i .. ": " .. x .. "," .. y)
       end
     end
     
-    -- Check other tag formats if still needed
-    if offsetNeeded then
-      for _, tag in ipairs(sprite.tags) do
-        if tag.fromFrame.frameNumber <= frameNumber and 
-           tag.toFrame.frameNumber >= frameNumber then
-           
-          -- Old format: offset_X_Y
-          local x, y = tag.name:match("^offset_(%d+)_(%d+)$")
-          if x and y then
-            frameOffsets[i] = {
-              x = tonumber(x),
-              y = tonumber(y)
-            }
-            offsetNeeded = false
-            break
-          end
-        end
-      end
-    end
-    
-    -- Check global table if still needed
-    if offsetNeeded and _G.exultFrameData then
-      local frameKey = sprite.filename .. "_" .. tostring(frameNumber)
-      local storedData = _G.exultFrameData[frameKey]
-      
-      if storedData then
-        frameOffsets[i] = {
-          x = storedData.offsetX,
-          y = storedData.offsetY
-        }
-        offsetNeeded = false
-      end
-    end
-    
-    -- Mark for prompting if still needed
+    -- If no cel data found, use default or prompt
     if offsetNeeded then
       frameOffsets[i] = {
         needsPrompt = true
       }
+      debug("No offset data found for frame " .. i .. ", will prompt user")
     end
   end
   
@@ -741,6 +650,26 @@ function exportSHP()
   else
     showError("Failed to export SHP file.")
   end
+
+  -- Restore original default extension preference
+  if app.preferences and app.preferences.save_file and originalDefaultExt ~= nil then
+    app.preferences.save_file.default_extension = originalDefaultExt
+    debug("Restored original default image extension")
+  end
+end
+
+function spriteHasCelOffsetData(sprite)
+  -- Check if any cel has offset data stored
+  for _, frame in ipairs(sprite.frames) do
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frame.frameNumber)
+    
+    if cel and cel.data and cel.data:match("offset:") then
+      return true
+    end
+  end
+  
+  return false
 end
 
 function init(plugin)
@@ -776,11 +705,5 @@ function init(plugin)
     }
   end
 end
-
--- Create a global table to store frame offset data across the entire plugin session
-if not _G.exultFrameData then
-  _G.exultFrameData = {}
-end
-
 
 return { init=init }
