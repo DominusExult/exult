@@ -29,51 +29,18 @@ end
 
 -- Helper to run commands with hidden output
 function executeHidden(cmd)
-  -- For debugging, run raw command instead with output captured
-  if debugEnabled then
-    debug("Executing with output capture: " .. cmd)
-    local tmpFile = app.fs.joinPath(app.fs.tempPath, "exult-shp-output-" .. os.time() .. ".txt")
-    
-    -- Add output redirection to file
-    local redirectCmd
-    if app.fs.pathSeparator == "\\" then
-      -- Windows
-      redirectCmd = cmd .. " > " .. quoteIfNeeded(tmpFile) .. " 2>&1"
-    else
-      -- Unix-like (macOS, Linux)
-      redirectCmd = cmd .. " > " .. quoteIfNeeded(tmpFile) .. " 2>&1"
-    end
-    
-    -- Execute the command
-    local success = os.execute(redirectCmd)
-    
-    -- Read and log the output
-    if app.fs.isFile(tmpFile) then
-      local file = io.open(tmpFile, "r")
-      if file then
-        debug("Command output:")
-        local output = file:read("*all")
-        debug(output or "<no output>")
-        file:close()
-      end
-      -- Clean up temp file (comment this out if you want to keep the logs)
-      -- app.fs.removeFile(tmpFile)
-    end
-    
-    return success
+  -- Check operating system and add appropriate redirection
+  local redirectCmd
+  if app.fs.pathSeparator == "\\" then
+    -- Windows
+    redirectCmd = cmd .. " > NUL 2>&1"
   else
-    -- Check operating system and add appropriate redirection
-    local redirectCmd
-    if app.fs.pathSeparator == "\\" then
-      -- Windows
-      redirectCmd = cmd .. " > NUL 2>&1"
-    else
-      -- Unix-like (macOS, Linux)
-      redirectCmd = cmd .. " > /dev/null 2>&1"
-    end
-    
-    return os.execute(redirectCmd)
+    -- Unix-like (macOS, Linux)
+    redirectCmd = cmd .. " > /dev/null 2>&1"
   end
+  
+  debug("Executing: " .. cmd)
+  return os.execute(redirectCmd)
 end
 
 debug("Plugin initializing...")
@@ -223,33 +190,6 @@ function importSHP(filename)
                       true)
 end
 
-function getCelOffsetData(cel)
-  if not cel then return nil end
-  
-  -- Only extract from cel's user data
-  if cel.data and cel.data:match("offset:") then
-    local x, y = cel.data:match("offset:(%d+),(%d+)")
-    if x and y then
-      return {
-        offsetX = tonumber(x),
-        offsetY = tonumber(y)
-      }
-    end
-  end
-  
-  return nil
-end
-
-function setCelOffsetData(cel, offsetX, offsetY)
-  if not cel then return end
-  
-  -- Store offset directly in the cel's user data only
-  cel.data = string.format("offset:%d,%d", offsetX or 0, offsetY or 0)
-  debug("Stored offset data in cel user data: " .. cel.data)
-  
-  -- No longer store in layer name
-end
-
 function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrames)
   if not converterExists then
     showError("SHP converter not found at: " .. converterPath)
@@ -351,45 +291,22 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     return false
   end
   
-  -- Immediately rename the file to the SHP filename to avoid save prompts later
-  sprite.filename = shpFile
-  debug("Set sprite filename to: " .. shpFile)
-  
-  -- RESIZE TO MAXIMUM DIMENSIONS - add this block
-  if sprite.width < maxWidth or sprite.height < maxHeight then
-    debug("Resizing sprite to maximum dimensions: " .. maxWidth .. "x" .. maxHeight)
-    
-    -- Calculate center offsets to keep the content centered
-    local offsetX = math.floor((maxWidth - sprite.width) / 2)
-    local offsetY = math.floor((maxHeight - sprite.height) / 2)
-    
-    -- Resize the sprite with calculated offsets
-    sprite:resize(maxWidth, maxHeight, offsetX, offsetY)
-    
-    -- IMPORTANT: After resizing, we need to adjust the position of the first cel
-    local cel = sprite.layers[1]:cel(1)
-    if cel then
-      -- Store the original size before it gets lost
-      local originalWidth = sprite.width - offsetX * 2
-      local originalHeight = sprite.height - offsetY * 2
-      
-      -- Update the cel position to account for the offset
-      cel.position = Point(offsetX, offsetY)
-      
-      -- Store the original bounds in the cel's user data for export
-      local celBounds = {
-        x = offsetX,
-        y = offsetY,
-        width = originalWidth,
-        height = originalHeight
-      }
-      debug("Adjusted first cel position to: " .. cel.position.x .. "," .. cel.position.y)
-    end
+   -- Immediately rename the file to the SHP filename to avoid save prompts later
+   sprite.filename = shpFile
+
+  -- Resize canvas to maximum dimensions if needed
+  if maxWidth > sprite.width or maxHeight > sprite.height then
+    debug("Resizing canvas to " .. maxWidth .. "x" .. maxHeight)
+    app.command.CanvasSize {
+      ui=false,
+      width=maxWidth,
+      height=maxHeight,
+      left=0,
+      top=0,
+      right=maxWidth-sprite.width, 
+      bottom=maxHeight-sprite.height
+    }
   end
-  
-  -- Rename the first layer to indicate it's frame 1
-  local baseLayer = sprite.layers[1]
-  baseLayer.name = "Frame 1"
   
   -- Set pivot from metadata for first frame
   if app.fs.isFile(firstMeta) then
@@ -403,15 +320,16 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
       end
       meta:close()
       
-      -- Store offset data in the cel's user data
-      local firstFrameCel = baseLayer:cel(1)
+      -- Store offset in cel's user data for the first frame
+      local firstFrameCel = sprite.layers[1]:cel(1)
       if firstFrameCel then
-        setCelOffsetData(firstFrameCel, offsetX, offsetY)
+        firstFrameCel.data = string.format("offset:%d,%d", offsetX or 0, offsetY or 0)
+        debug("Stored offset data in first frame cel user data: " .. firstFrameCel.data)
       end
     end
   end
   
-  -- Now add additional frames as layers
+  -- Now add additional frames
   local frameIndex = 1
   while true do
     local framePath = actualOutputBase .. "_" .. frameIndex .. ".png"
@@ -422,23 +340,27 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
       break
     end
     
-    debug("Adding frame " .. frameIndex .. " as layer")
+    debug("Adding frame " .. frameIndex)
     
     -- Load the image
     local frameImage = Image{fromFile=framePath}
     
-    -- Add new layer (instead of frame)
-    local newLayer = sprite:newLayer()
-    newLayer.name = "Frame " .. (frameIndex + 1) -- 1-based naming
+    -- Create a new frame (user will need to handle the prompt)
+    local newFrame = sprite:newFrame()
     
-    -- Create new cel with this image (in the first frame)
-    local cel = sprite:newCel(newLayer, 1, frameImage, Point(0,0))
+    -- Continue with the rest of the process
+    app.command.GotoFrame{frame=frameIndex+1}
     
-    -- Load and set offset data from metadata
+    -- Create new cel with this image
+    local layer = sprite.layers[1]
+    local cel = sprite:newCel(layer, frameIndex+1, frameImage, Point(0,0))
+    
+    -- Load and set pivot from metadata
+    local offsetX, offsetY = 0, 0  -- Define these at frame loop level, not inside the if block
+    
     if app.fs.isFile(metaPath) then
       local meta = io.open(metaPath, "r")
       if meta then
-        local offsetX, offsetY = 0, 0
         for line in meta:lines() do
           local key, value = line:match("(.+)=(.+)")
           if key == "offset_x" then offsetX = tonumber(value) end
@@ -446,56 +368,20 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
         end
         meta:close()
         
-        -- Store offset in cel user data
+        -- Set frame center point (pivot)
+        app.command.FrameProperties{
+          center=Point(offsetX, offsetY)
+        }
+        
+        -- Store offset data in cel's user data
         if cel then
-          setCelOffsetData(cel, offsetX, offsetY)
-          debug("Stored offset data for layer " .. newLayer.name .. ": " .. offsetX .. "," .. offsetY)
+          cel.data = string.format("offset:%d,%d", offsetX, offsetY)
+          debug("Stored offset data in cel user data: " .. cel.data)
         end
       end
     end
     
     frameIndex = frameIndex + 1
-  end
-  
-  -- We're now done with all layers. Replace the first layer's cel image to ensure exact dimensions
-  debug("Replacing first layer's cel with original image to preserve dimensions")
-  local originalFramePath = actualOutputBase .. "_0.png"
-  
-  -- Load the original first frame image again
-  if app.fs.isFile(originalFramePath) then
-    -- Get the original image
-    local originalImage = Image{fromFile=originalFramePath}
-    
-    -- Get the first layer and its cel
-    local firstLayer = sprite.layers[1]
-    local firstCel = firstLayer:cel(1)
-    
-    if firstCel then
-      -- Store the current position and offset data BEFORE deleting the cel
-      local currentPosition = firstCel.position
-      local offsetData = nil
-      
-      -- Safely get the offset data before removing the cel
-      if firstCel then
-        offsetData = getCelOffsetData(firstCel)
-        debug("Saved offset data from original cel: " .. 
-              (offsetData and (offsetData.offsetX .. "," .. offsetData.offsetY) or "none"))
-      end
-      
-      -- Remove the old cel first
-      sprite:deleteCel(firstLayer, 1)
-      
-      -- Now add the new cel
-      local newCel = sprite:newCel(firstLayer, 1, originalImage, currentPosition)
-      
-      -- Apply the saved offset data to the new cel
-      if offsetData then
-        setCelOffsetData(newCel, offsetData.offsetX, offsetData.offsetY)
-        debug("Re-applied offset data to new cel: " .. offsetData.offsetX .. "," .. offsetData.offsetY)
-      end
-      
-      debug("Replaced first cel image with original dimensions " .. originalImage.width .. "x" .. originalImage.height)
-    end
   end
   
   -- Set layer edges to be visible after import
@@ -506,7 +392,7 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
       docPref.show.layer_edges = true
       debug("Enabled layer edges display for this document")
     else
-      debug("Could not set layer_edges preference (show section not found in document preferences)")
+      debug("Could not set layer_edges preference (editor section not found in document preferences)")
     end
   else
     debug("Could not set layer_edges preference (preferences not available)")
@@ -515,19 +401,7 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   return true, sprite
 end
 
--- Add this helper function to check for offset tags
-function spriteHasCelOffsetData(sprite)
-  -- Check if any cel has offset data stored
-  for i, layer in ipairs(sprite.layers) do
-    local cel = layer:cel(1)
-    if cel and cel.data and cel.data:match("offset:") then
-      return true
-    end
-  end
-  return false
-end
-
--- Replace the exportSHP function with this improved version:
+-- Modify the export dialog function
 function exportSHP()
   -- Get active sprite
   local sprite = app.activeSprite
@@ -551,18 +425,12 @@ function exportSHP()
     return
   end
   
+  -- Check if sprite has any offset data in cels
+  local hasOffsetData = spriteHasCelOffsetData(sprite)
+  
   -- Default offset values for fallback
   local defaultOffsetX = math.floor(sprite.width / 2)
   local defaultOffsetY = math.floor(sprite.height / 2)
-  
-  -- Count how many layers already have offset data
-  local layersWithOffsets = 0
-  for _, layer in ipairs(sprite.layers) do
-    local cel = layer:cel(1)
-    if cel and getCelOffsetData(cel) then
-      layersWithOffsets = layersWithOffsets + 1
-    end
-  end
   
   -- Show initial export dialog - simplified without offset fields
   local dlg = Dialog("Export SHP File")
@@ -574,30 +442,18 @@ function exportSHP()
     focus=true
   }
   
-  -- Show informational text about layer offsets
-  if layersWithOffsets == #sprite.layers then
+  -- Just show informational text about offset data source
+  if hasOffsetData then
     dlg:label{
-      id="allOffsetsSet",
-      text="All layers have offset data. Ready to export."
-    }
-  elseif layersWithOffsets > 0 then
-    dlg:label{
-      id="someOffsetsSet",
-      text=layersWithOffsets .. " of " .. #sprite.layers .. " layers have offset data. You'll be prompted for the rest."
+      id="usingData",
+      text="Using offset data from cels"
     }
   else
     dlg:label{
-      id="noOffsets",
-      text="No layers have offset data. You'll be prompted to set offsets for each layer."
+      id="noData",
+      text="You will be prompted for offset values for frames without stored offsets"
     }
   end
-  
-  -- Add option to edit existing offsets
-  dlg:check{
-    id="editExisting",
-    text="Edit existing offsets",
-    selected=false
-  }
   
   -- Store dialog result in outer scope
   local dialogResult = false
@@ -609,7 +465,6 @@ function exportSHP()
     onclick=function()
       dialogResult = true
       exportSettings.outFile = dlg.data.outFile
-      exportSettings.editExisting = dlg.data.editExisting
       dlg:close()
     end
   }
@@ -649,165 +504,132 @@ function exportSHP()
   
   -- Create metadata file
   local meta = io.open(metaPath, "w")
-  meta:write(string.format("num_frames=%d\n", #sprite.layers))
+  meta:write(string.format("num_frames=%d\n", #sprite.frames))
   
-  -- Track frame offsets - the index in this array is the export frame number
-  local layerOffsets = {}
+  -- Track frame offsets
+  local frameOffsets = {}
   
-  -- First pass: Check which layers need offset prompts
-  for i, layer in ipairs(sprite.layers) do
+  -- First pass: Check which frames have offset data in cels
+  for i, frame in ipairs(sprite.frames) do
+    local frameNumber = frame.frameNumber
     local offsetNeeded = true
     
-    -- Check for cel user data first
-    local cel = layer:cel(1)
-    local offsetData = cel and getCelOffsetData(cel)
+    -- Check for offset data in cel user data
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frameNumber)
     
-    if offsetData and not exportSettings.editExisting then
-      layerOffsets[i] = {
-        x = offsetData.offsetX,
-        y = offsetData.offsetY,
-        fromData = true
-      }
-      offsetNeeded = false
-      debug("Using existing offset from cel data for layer " .. i .. ": " .. offsetData.offsetX .. "," .. offsetData.offsetY)
+    if cel and cel.data then
+      -- Try to extract offset from cel.data
+      local x, y = cel.data:match("offset:(%d+),(%d+)")
+      
+      if x and y then
+        frameOffsets[i] = {
+          x = tonumber(x),
+          y = tonumber(y)
+        }
+        offsetNeeded = false
+        debug("Found offset in cel user data for frame " .. i .. ": " .. x .. "," .. y)
+      end
     end
     
-    -- Mark for prompting if still needed
+    -- If no cel data found, use default or prompt
     if offsetNeeded then
-      layerOffsets[i] = {
+      frameOffsets[i] = {
         needsPrompt = true
       }
+      debug("No offset data found for frame " .. i .. ", will prompt user")
     end
   end
   
   -- Second pass: Prompt for missing offsets
-  for i, layerData in ipairs(layerOffsets) do
-    if layerData.needsPrompt then
-      -- Make this layer visible and others invisible for visual reference
-      for j, otherLayer in ipairs(sprite.layers) do
-        otherLayer.isVisible = (j == i)
-      end
+  for i, frameData in ipairs(frameOffsets) do
+    if frameData.needsPrompt then
+      -- Go to the frame to show it to the user
+      app.command.GotoFrame{frame=sprite.frames[i].frameNumber}
       
-      -- Create prompt dialog for this specific layer
-      local layerDlg = Dialog("Layer Offset")
+      -- Create prompt dialog for this specific frame
+      local frameDlg = Dialog("Frame " .. i .. " Offset")
       
-      -- Get cleaner name (without offset info)
-      local cleanName = sprite.layers[i].name:gsub(" %[.*%]$", "")
-      
-      layerDlg:label{
+      frameDlg:label{
         id="info",
-        text="Set offset for " .. cleanName .. " (" .. i .. " of " .. #sprite.layers .. ")"
+        text="Set offset for frame " .. i .. " of " .. #sprite.frames
       }
       
-      -- If we have existing data, use it as default
-      local cel = sprite.layers[i]:cel(1)
-      local existingData = cel and getCelOffsetData(cel)
-      local initialX = defaultOffsetX
-      local initialY = defaultOffsetY
-      
-      if existingData then
-        initialX = existingData.offsetX
-        initialY = existingData.offsetY
-      end
-      
-      layerDlg:number{
+      frameDlg:number{
         id="offsetX",
         label="Offset X:",
-        text=tostring(initialX),
+        text=tostring(defaultOffsetX),
         decimals=0
       }
       
-      layerDlg:number{
+      frameDlg:number{
         id="offsetY",
         label="Offset Y:",
-        text=tostring(initialY),
+        text=tostring(defaultOffsetY),
         decimals=0
       }
       
-      local layerResult = false
+      local frameResult = false
       
-      layerDlg:button{
+      frameDlg:button{
         id="ok",
         text="OK",
         onclick=function()
-          layerResult = true
-          layerOffsets[i] = {
-            x = layerDlg.data.offsetX,
-            y = layerDlg.data.offsetY
+          frameResult = true
+          frameOffsets[i] = {
+            x = frameDlg.data.offsetX,
+            y = frameDlg.data.offsetY
           }
-          layerDlg:close()
+          frameDlg:close()
         end
       }
       
       -- Show dialog and wait for result
-      layerDlg:show{wait=true}
+      frameDlg:show{wait=true}
       
-      -- If user cancelled, use defaults or existing data
-      if not layerResult then
-        if existingData then
-          layerOffsets[i] = {
-            x = existingData.offsetX,
-            y = existingData.offsetY
-          }
-        else
-          layerOffsets[i] = {
-            x = defaultOffsetX,
-            y = defaultOffsetY
-          }
-        end
-      end
-      
-      -- Store the value in the cel for future use
-      local cel = sprite.layers[i]:cel(1)
-      if cel then
-        setCelOffsetData(cel, layerOffsets[i].x, layerOffsets[i].y)
+      -- If user cancelled, use defaults
+      if not frameResult then
+        frameOffsets[i] = {
+          x = defaultOffsetX,
+          y = defaultOffsetY
+        }
       end
     end
   end
   
-  -- Restore all layers to visible
-  for _, layer in ipairs(sprite.layers) do
-    layer.isVisible = true
-  end
-  
-  -- Now export each layer as a frame - directly to image files preserving original dimensions
-  for i, layer in ipairs(sprite.layers) do
-    local frameIndex = i - 1 -- Convert to 0-based for the SHP file
-    local filepath = string.format("%s%d.png", basePath, frameIndex)
+  -- Now export each frame with its determined offset
+  for i, frame in ipairs(sprite.frames) do
+    local filepath = string.format("%s%d.png", basePath, i-1)
     
-    debug("Exporting layer " .. i .. " (" .. layer.name .. ") as frame " .. frameIndex)
+    -- Go to the frame we want to save
+    app.command.GotoFrame{frame=frame.frameNumber}
     
-    -- Get the cel for this layer
-    local cel = layer:cel(1)
-    if cel then
-      -- Get just the cel image (not including position)
-      local celImage = cel.image
-      
-      -- Write the image directly to a file without creating a sprite
-      celImage:saveAs(filepath)
-      
-      -- Verify the file was created
-      if not app.fs.isFile(filepath) then
-        debug("WARNING: Failed to export frame " .. frameIndex)
-      else
-        -- Get offset from cel data
-        local offsetData = getCelOffsetData(cel)
-        local offsetX = offsetData and offsetData.offsetX or 0
-        local offsetY = offsetData and offsetData.offsetY or 0
-        
-        -- Write to metadata file
-        meta:write(string.format("frame%d_offset_x=%d\n", frameIndex, offsetX))
-        meta:write(string.format("frame%d_offset_y=%d\n", frameIndex, offsetY))
-        
-        debug("Exported frame " .. frameIndex .. " with dimensions " .. 
-              celImage.width .. "x" .. celImage.height .. 
-              " and offsets: " .. offsetX .. "," .. offsetY)
-      end
+    -- Get the cel directly
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frame.frameNumber)
+    
+    -- Save the frame
+    if cel and cel.image then
+      cel.image:saveAs(filepath)
+      debug("Saved frame " .. (i-1))
+    else
+      debug("ERROR: Could not find cel/image for frame " .. (i-1))
     end
+    
+    -- Get the offset for this frame
+    local offsetX = frameOffsets[i].x
+    local offsetY = frameOffsets[i].y
+    
+    -- Write metadata for pivot points
+    meta:write(string.format("frame%d_offset_x=%d\n", i-1, offsetX))
+    meta:write(string.format("frame%d_offset_y=%d\n", i-1, offsetY))
   end
   
-  -- Close metadata file
   meta:close()
+  
+  -- Use first frame's offset as default for the converter command
+  local cmdOffsetX = frameOffsets[1].x or defaultOffsetX
+  local cmdOffsetY = frameOffsets[1].y or defaultOffsetY
   
   -- Create and execute the export command
   local cmd = quoteIfNeeded(converterPath) .. 
@@ -815,26 +637,39 @@ function exportSHP()
              quoteIfNeeded(basePath) .. 
              " " .. quoteIfNeeded(exportSettings.outFile) .. 
              " 0" ..
-             " " .. layerOffsets[1].x ..
-             " " .. layerOffsets[1].y ..
+             " " .. cmdOffsetX ..
+             " " .. cmdOffsetY ..
              " " .. quoteIfNeeded(metaPath)
   
   debug("Executing: " .. cmd)
   
   -- Execute command
   local success = executeHidden(cmd)
-  
-  -- Restore original default extension preference
-  if app.preferences and app.preferences.save_file and originalDefaultExt ~= nil then
-    app.preferences.save_file.default_extension = originalDefaultExt
-    debug("Restored original default image extension")
-  end
-  
   if success then
     app.alert("SHP file exported successfully.")
   else
     showError("Failed to export SHP file.")
   end
+
+  -- Restore original default extension preference
+  if app.preferences and app.preferences.save_file and originalDefaultExt ~= nil then
+    app.preferences.save_file.default_extension = originalDefaultExt
+    debug("Restored original default image extension")
+  end
+end
+
+function spriteHasCelOffsetData(sprite)
+  -- Check if any cel has offset data stored
+  for _, frame in ipairs(sprite.frames) do
+    local layer = sprite.layers[1]
+    local cel = layer:cel(frame.frameNumber)
+    
+    if cel and cel.data and cel.data:match("offset:") then
+      return true
+    end
+  end
+  
+  return false
 end
 
 function init(plugin)
