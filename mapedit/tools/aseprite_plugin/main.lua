@@ -309,21 +309,79 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   -- Continue with loading the frames
   debug("Loading output files into Aseprite")
   
-  -- First scan for all frames to find max dimensions for canvas
+  -- First scan for all frames to find max dimensions and offset extremes
   local maxWidth, maxHeight = 0, 0
+  local minOffsetX, minOffsetY = 999999, 999999
+  local maxRightEdge, maxBottomEdge = -999999, -999999
   local frameIndex = 0
   
+  -- Scan all frames once to determine canvas size and gather offset data
+  local frameIndex = 0
+  local maxOffsetX = 0
+  local maxOffsetY = 0
+  local offsetData = {}  -- Store all offset data in a table to avoid re-reading files
+  
+  -- First pass: gather all offset data and find dimensions
   while true do
     local framePath = actualOutputBase .. "_" .. frameIndex .. ".png"
+    local metaPath = actualOutputBase .. "_" .. frameIndex .. ".meta"
+    
     if not app.fs.isFile(framePath) then break end
     
     local image = Image{fromFile=framePath}
-    maxWidth = math.max(maxWidth, image.width)
-    maxHeight = math.max(maxHeight, image.height)
+    local offsetX, offsetY = 0, 0
+    
+    -- Read offset from metadata
+    if app.fs.isFile(metaPath) then
+      local meta = io.open(metaPath, "r")
+      if meta then
+        for line in meta:lines() do
+          local key, value = line:match("(.+)=(.+)")
+          if key == "offset_x" then offsetX = tonumber(value) end
+          if key == "offset_y" then offsetY = tonumber(value) end
+        end
+        meta:close()
+      end
+    end
+    
+    -- Store offset data for later use
+    offsetData[frameIndex] = {
+      offsetX = offsetX,
+      offsetY = offsetY,
+      width = image.width,
+      height = image.height
+    }
+    
+    -- Track maximum offsets
+    maxOffsetX = math.max(maxOffsetX, offsetX)
+    maxOffsetY = math.max(maxOffsetY, offsetY)
+    
+    -- Track maximum extents
+    local rightEdge = offsetX + image.width
+    local bottomEdge = offsetY + image.height
+    maxRightEdge = math.max(maxRightEdge, rightEdge)
+    maxBottomEdge = math.max(maxBottomEdge, bottomEdge)
+    
+    debug("Frame " .. frameIndex .. ": " .. image.width .. "x" .. image.height .. 
+          " with offset at: (" .. offsetX .. "," .. offsetY .. ")")
+    
     frameIndex = frameIndex + 1
   end
   
-  debug("Maximum dimensions across all frames: " .. maxWidth .. "x" .. maxHeight)
+  -- Calculate canvas size - using the rightmost and bottommost edges
+  maxWidth = maxRightEdge
+  maxHeight = maxBottomEdge
+  
+  debug("Final canvas size: " .. maxWidth .. "x" .. maxHeight)
+  
+  -- Fix the first frame positioning (around line 400-425):
+  -- Position the first cel based on offset
+  
+  debug("Maximum offsets: (" .. maxOffsetX .. "," .. maxOffsetY .. ")")
+  
+  debug("Min offsets: (" .. minOffsetX .. "," .. minOffsetY .. ")")
+  debug("Max edges: right=" .. maxRightEdge .. ", bottom=" .. maxBottomEdge)
+  debug("Final canvas size: " .. maxWidth .. "x" .. maxHeight)
   
   -- Now load first frame
   local firstFrame = actualOutputBase .. "_0.png"
@@ -355,36 +413,48 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   sprite.filename = shpFile
   debug("Set sprite filename to: " .. shpFile)
   
-  -- RESIZE TO MAXIMUM DIMENSIONS - add this block
-  if sprite.width < maxWidth or sprite.height < maxHeight then
-    debug("Resizing sprite to maximum dimensions: " .. maxWidth .. "x" .. maxHeight)
+  -- RESIZE TO EXACT DIMENSIONS - no centering, no buffer, top-aligned
+  if sprite.width ~= maxWidth or sprite.height ~= maxHeight then
+    debug("Resizing sprite to exact dimensions: " .. maxWidth .. "x" .. maxHeight)
     
-    -- Calculate center offsets to keep the content centered
-    local offsetX = math.floor((maxWidth - sprite.width) / 2)
-    local offsetY = math.floor((maxHeight - sprite.height) / 2)
+    -- Resize WITHOUT centering - position at top-left (0,0)
+    sprite:resize(maxWidth, maxHeight, 0, 0)
     
-    -- Resize the sprite with calculated offsets
-    sprite:resize(maxWidth, maxHeight, offsetX, offsetY)
-    
-    -- IMPORTANT: After resizing, we need to adjust the position of the first cel
+    -- Ensure first cel remains at top-left (0,0)
     local cel = sprite.layers[1]:cel(1)
     if cel then
-      -- Store the original size before it gets lost
-      local originalWidth = sprite.width - offsetX * 2
-      local originalHeight = sprite.height - offsetY * 2
-      
-      -- Update the cel position to account for the offset
-      cel.position = Point(offsetX, offsetY)
-      
-      -- Store the original bounds in the cel's user data for export
-      local celBounds = {
-        x = offsetX,
-        y = offsetY,
-        width = originalWidth,
-        height = originalHeight
-      }
-      debug("Adjusted first cel position to: " .. cel.position.x .. "," .. cel.position.y)
+      cel.position = Point(0, 0)
+      debug("Positioned first cel at top-left (0,0)")
     end
+  end
+  
+  -- Fix the first frame positioning (around line 400-425):
+  -- Position the first cel based on offset
+  local firstMeta = actualOutputBase .. "_0.meta"
+  local firstOffsetX, firstOffsetY = 0, 0
+    
+  if app.fs.isFile(firstMeta) then
+    local meta = io.open(firstMeta, "r")
+    if meta then
+      for line in meta:lines() do
+        local key, value = line:match("(.+)=(.+)")
+        if key == "offset_x" then firstOffsetX = tonumber(value) end
+        if key == "offset_y" then firstOffsetY = tonumber(value) end
+      end
+      meta:close()
+    end
+  end
+    
+  -- Calculate position based on offset from top-left
+  -- An offset of (x,y) means the image should be positioned at (maxOffsetX-x, maxOffsetY-y)
+  local adjustedX = maxOffsetX - firstOffsetX
+  local adjustedY = maxOffsetY - firstOffsetY
+  
+  -- Set the position
+  local cel = sprite.layers[1]:cel(1)
+  if cel then
+    cel.position = Point(adjustedX, adjustedY)
+    debug("Positioned first cel at adjusted position: (" .. adjustedX .. "," .. adjustedY .. ")")
   end
   
   -- Rename the first layer to indicate it's frame 1
@@ -431,8 +501,30 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     local newLayer = sprite:newLayer()
     newLayer.name = "Frame " .. (frameIndex + 1) -- 1-based naming
     
-    -- Create new cel with this image (in the first frame)
-    local cel = sprite:newCel(newLayer, 1, frameImage, Point(0,0))
+    -- Create new cel with this image - positioned at absolute offset
+    local offsetX, offsetY = 0, 0
+    if app.fs.isFile(metaPath) then
+      -- Read the offsets first
+      local meta = io.open(metaPath, "r")
+      if meta then
+        for line in meta:lines() do
+          local key, value = line:match("(.+)=(.+)")
+          if key == "offset_x" then offsetX = tonumber(value) end
+          if key == "offset_y" then offsetY = tonumber(value) end
+        end
+        meta:close()
+      end
+    end
+    
+    -- Fix additional frame positioning (around line 485):  
+    -- Calculate position based on offset from top-left
+    -- An offset of (x,y) means the image should be positioned at (maxOffsetX-x, maxOffsetY-y)
+    local adjustedX = maxOffsetX - offsetX
+    local adjustedY = maxOffsetY - offsetY
+    
+    -- Create cel with correct position
+    local cel = sprite:newCel(newLayer, 1, frameImage, Point(adjustedX, adjustedY))
+    debug("Positioned layer " .. frameIndex .. " at adjusted position: (" .. adjustedX .. "," .. adjustedY .. ")")
     
     -- Load and set offset data from metadata
     if app.fs.isFile(metaPath) then
