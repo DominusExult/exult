@@ -1,5 +1,5 @@
 /*
- *  exult_shape.cc - Aseprite plugin for SHP files
+ *  exult_shape.cc - Aseprite plugin converter for SHP files
  *
  *  Copyright (C) 2025  The Exult Team
  *
@@ -104,7 +104,7 @@ bool saveFrameToPNG(
 		const char* filename, const unsigned char* data, int width, int height,
 		unsigned char* palette);
 
-// Function to import SHP to PNG
+// Import SHP to PNG
 bool importSHP(
 		const char* shpFilename, const char* outputPngFilename,
 		const char* paletteFile) {
@@ -244,7 +244,7 @@ bool importSHP(
 	return true;
 }
 
-// Function to save a frame to a PNG file
+// Save a frame to a PNG file
 bool saveFrameToPNG(
 		const char* filename, const unsigned char* data, int width, int height,
 		unsigned char* palette) {
@@ -329,7 +329,7 @@ bool saveFrameToPNG(
 	return true;
 }
 
-// Function to export PNG to SHP
+// Export PNG to SHP
 bool exportSHP(
 		const char* basePath, const char* outputShpFilename, int defaultOffsetX,
 		int defaultOffsetY, const char* metadataFile) {
