@@ -316,7 +316,6 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
   local frameIndex = 0
   
   -- Scan all frames once to determine canvas size and gather offset data
-  local frameIndex = 0
   local maxOffsetX = 0
   local maxOffsetY = 0
   local offsetData = {}  -- Store all offset data in a table to avoid re-reading files
@@ -362,26 +361,22 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     maxRightEdge = math.max(maxRightEdge, rightEdge)
     maxBottomEdge = math.max(maxBottomEdge, bottomEdge)
     
-    debug("Frame " .. frameIndex .. ": " .. image.width .. "x" .. image.height .. 
-          " with offset at: (" .. offsetX .. "," .. offsetY .. ")")
-    
     frameIndex = frameIndex + 1
   end
+  
+  debug("Found " .. frameIndex .. " frames, canvas size: " .. maxWidth .. "x" .. maxHeight)
+  debug("Processed " .. frameIndex .. " frames with offsets. Maximum offset: (" .. maxOffsetX .. "," .. maxOffsetY .. ")")
   
   -- Calculate canvas size - using the rightmost and bottommost edges
   maxWidth = maxRightEdge
   maxHeight = maxBottomEdge
   
-  debug("Final canvas size: " .. maxWidth .. "x" .. maxHeight)
+  debug("Canvas calculated: " .. maxWidth .. "x" .. maxHeight .. " based on max offsets: (" .. maxOffsetX .. "," .. maxOffsetY .. ")")
   
   -- Fix the first frame positioning (around line 400-425):
   -- Position the first cel based on offset
   
   debug("Maximum offsets: (" .. maxOffsetX .. "," .. maxOffsetY .. ")")
-  
-  debug("Min offsets: (" .. minOffsetX .. "," .. minOffsetY .. ")")
-  debug("Max edges: right=" .. maxRightEdge .. ", bottom=" .. maxBottomEdge)
-  debug("Final canvas size: " .. maxWidth .. "x" .. maxHeight)
   
   -- Now load first frame
   local firstFrame = actualOutputBase .. "_0.png"
@@ -502,48 +497,21 @@ function processImport(shpFile, paletteFile, outputBasePath, createSeparateFrame
     newLayer.name = "Frame " .. (frameIndex + 1) -- 1-based naming
     
     -- Create new cel with this image - positioned at absolute offset
-    local offsetX, offsetY = 0, 0
-    if app.fs.isFile(metaPath) then
-      -- Read the offsets first
-      local meta = io.open(metaPath, "r")
-      if meta then
-        for line in meta:lines() do
-          local key, value = line:match("(.+)=(.+)")
-          if key == "offset_x" then offsetX = tonumber(value) end
-          if key == "offset_y" then offsetY = tonumber(value) end
-        end
-        meta:close()
-      end
-    end
-    
-    -- Fix additional frame positioning (around line 485):  
-    -- Calculate position based on offset from top-left
-    -- An offset of (x,y) means the image should be positioned at (maxOffsetX-x, maxOffsetY-y)
-    local adjustedX = maxOffsetX - offsetX
-    local adjustedY = maxOffsetY - offsetY
-    
-    -- Create cel with correct position
-    local cel = sprite:newCel(newLayer, 1, frameImage, Point(adjustedX, adjustedY))
-    debug("Positioned layer " .. frameIndex .. " at adjusted position: (" .. adjustedX .. "," .. adjustedY .. ")")
-    
-    -- Load and set offset data from metadata
-    if app.fs.isFile(metaPath) then
-      local meta = io.open(metaPath, "r")
-      if meta then
-        local offsetX, offsetY = 0, 0
-        for line in meta:lines() do
-          local key, value = line:match("(.+)=(.+)")
-          if key == "offset_x" then offsetX = tonumber(value) end
-          if key == "offset_y" then offsetY = tonumber(value) end
-        end
-        meta:close()
-        
-        -- Store offset in cel user data
-        if cel then
-          setCelOffsetData(cel, offsetX, offsetY)
-          debug("Stored offset data for layer " .. newLayer.name .. ": " .. offsetX .. "," .. offsetY)
-        end
-      end
+    local frameData = offsetData[frameIndex]
+    if frameData then
+      local offsetX = frameData.offsetX
+      local offsetY = frameData.offsetY
+      
+      -- Calculate position based on offset from top-left
+      local adjustedX = maxOffsetX - offsetX
+      local adjustedY = maxOffsetY - offsetY
+      
+      -- Create cel with correct position
+      local cel = sprite:newCel(newLayer, 1, frameImage, Point(adjustedX, adjustedY))
+      debug("Positioned layer " .. frameIndex .. " at adjusted position: (" .. adjustedX .. "," .. adjustedY .. ")")
+      
+      -- Store offset in cel user data (no need to re-read metadata)
+      setCelOffsetData(cel, offsetX, offsetY)
     end
     
     frameIndex = frameIndex + 1
