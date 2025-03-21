@@ -13,10 +13,8 @@ the imported file. However you can also save as the asprite file format which wi
 
 Issues of the plug-in
 =====================
-- Currently you can only import a shp file, not open it directly
-- On importing a shp you will be prompted for "Frame Properties" on each frame, hit ok or cancel,
-  neither matters. The reason is that Aseprite thinks it is an animation, when there are frames.
-
+- Currently you can only import a shp file, not open it directly.
+- Currently you can only export a shp file, not save/save as directly.
 
 
 How to Build and Install
