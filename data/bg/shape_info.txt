@@ -175,7 +175,7 @@
 
 #	Well of Souls
 #
-:748/52
+:748/52/0/0/0/0/60/1
 
 #	Orrery -- only shape #767 plays sfx to prevent too much noise
 #
@@ -188,7 +188,7 @@
 
 #	Smokebomb
 #
-:769/52
+:769/52/0/0/0/0/100/1
 
 #	The Vortex Cube
 #
