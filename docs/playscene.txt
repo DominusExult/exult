@@ -41,34 +41,40 @@ Example Script:
 #		that delay or use any value in milliseconds to override that. The higher
 #		the delay, the slower the animation.
 #
-#		:sfx/sfx_number/frame_number/continue
+#		:sfx/sfx_number/start_time/continue
 #
-#		:track/track_number/frame_number/continue
+#		:track/track_number/start_time/continue
 #
-#		:ogg/index_number/frame_number/continue
+#		:ogg/index_number/start_time/continue
 #
-#		:wave/index_number/frame_number/continue
+#		:wave/index_number/start_time/continue
 #
-#		:voc/index_number/frame_number/continue
+#		:voc/index_number/start_time/continue
 #		When speech is disabled, VOCs will not play.
 #
-#		:subtitle/index_number/frame_number/line_number/font/color/duration
-#		Subtitles are dependent on our global options. Color is not working atm.
+#		:subtitle/index_number/start_time/line_number/font/flic_color/position/duration
+#		Subtitles are dependent on our global options.
 #
 #		index_number is the order of files in the corresponding flx file.
 #
-#		frame_number of the playing flic on which audio starts playing
+#		start_time time in milliseconds since the flic started playing.
 #
 #		continue lets audio play continue playing even though it's scene or
 #		text section has finished playing.
 #
 #		line_number: subtitle texts are using numbered lines and then the same
-#		format as text in the section text - see below
+#		format as text in the section text - see below. Additionally you can 
+#		use \n for line breaks.
 #		Example:
-#		001:\CTis is a centered subtitle
+#		001:\CTis is a centered subtitle\nwith a line break.
 #
-#		duration is the number of frames a subtitle is shwon on screen
-#		(default is 15 frames). 
+#		flic_color uses the entered number of the FLIC's palette.
+#
+#		Position of the text is by default bottom (0) with the option to display
+#		in the center of the screen (1) or at the top (2).
+#
+#		duration is time in milliseconds a subtitle is shown on screen
+#		(default is 2000ms). 
 #
 
 :flic/0/0
