@@ -489,7 +489,10 @@ void ScenePlayer::play_flic_with_audio(
 												{cmd, end_time});
 									} else if constexpr (
 											std::is_same_v<T, AudioCommand>) {
-										// Existing audio code...
+										start_audio_by_type(
+												cmd, audio_ids,
+												command_audio_ids,
+												cmd_pair.second);
 									}
 								},
 								cmd_pair.first);
