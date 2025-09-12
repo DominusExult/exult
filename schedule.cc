@@ -5225,18 +5225,18 @@ void Forge_schedule::ending(int new_type    // New schedule.
 		hammer_obj->remove_this();
 	}
 
-	Game_object*             firepit_obj = npc->find_closest(739);
-	Game_object*             bellows_obj = npc->find_closest(431);
-	const Game_object_shared blank_obj   = blank.lock();
+	const Game_object_shared blank_obj = blank.lock();
+	if (blank_obj) {
+		blank_obj->remove_this();
+	}
 
+	Game_object* firepit_obj = npc->find_closest(739);
+	Game_object* bellows_obj = npc->find_closest(431);
 	if (firepit_obj && firepit_obj->get_framenum() != 0) {
 		firepit_obj->change_frame(0);
 	}
 	if (bellows_obj && bellows_obj->get_framenum() != 0) {
 		bellows_obj->change_frame(0);
-	}
-	if (blank_obj && blank_obj->get_framenum() != 0) {
-		blank_obj->change_frame(0);
 	}
 }
 
