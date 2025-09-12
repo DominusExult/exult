@@ -4888,6 +4888,8 @@ void Forge_schedule::now_what() {
 		}
 		if (!blank_obj) {
 			blank_obj = std::make_shared<Ireg_game_object>(668, 0, 0, 0);
+			blank_obj->move(npc->get_tile());
+			gwin->add_dirty(blank_obj.get());
 		}
 		blank                    = Game_object_weak(blank_obj);
 		Game_object* firepit_obj = npc->find_closest(739);
@@ -4980,6 +4982,7 @@ void Forge_schedule::now_what() {
 		if (!tongs_obj) {
 			tongs_obj = std::make_shared<Ireg_game_object>(994, 0, 0, 0);
 			tongs     = Game_object_weak(tongs_obj);
+			npc->add(tongs_obj.get(), true);
 		}
 		npc->empty_hands();    // make sure the tongs can be equipped
 		npc->add_readied(tongs_obj.get(), lhand);
@@ -5033,6 +5036,7 @@ void Forge_schedule::now_what() {
 		if (!hammer_obj) {
 			hammer_obj = std::make_shared<Ireg_game_object>(623, 0, 0, 0);
 			hammer     = Game_object_weak(hammer_obj);
+			npc->add(hammer_obj.get(), true);
 		}
 		npc->add_dirty();
 		const Game_object_shared tongs_obj = tongs.lock();
@@ -5133,6 +5137,7 @@ void Forge_schedule::now_what() {
 		if (!tongs_obj) {
 			tongs_obj = std::make_shared<Ireg_game_object>(994, 0, 0, 0);
 			tongs     = Game_object_weak(tongs_obj);
+			npc->add(tongs_obj.get(), true);
 		}
 		npc->empty_hands();    // make sure the tongs can be equipped
 		npc->add_readied(tongs_obj.get(), lhand);
