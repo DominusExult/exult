@@ -726,7 +726,7 @@ public:
 /*
  *  Blacksmith schedule
  */
-class Forge_schedule : public Schedule {
+class Forge_schedule : public Schedule_with_objects {
 	Game_object_weak tongs;
 	Game_object_weak hammer;
 	Game_object_weak blank;
@@ -751,6 +751,7 @@ class Forge_schedule : public Schedule {
 
 public:
 	Forge_schedule(Actor* n);
+	int  find_items(Game_object_vector& vec, int dist) override;
 	void now_what() override;              // Now what should NPC do?
 	void ending(int new_type) override;    // Switching to another schedule
 };
