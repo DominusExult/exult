@@ -4869,7 +4869,26 @@ void Bake_schedule::ending(int new_type) {
  */
 
 Forge_schedule::Forge_schedule(Actor* n)
-		: Schedule(n), state(put_sword_on_firepit) {}
+		: Schedule_with_objects(n), state(put_sword_on_firepit) {}
+
+int Forge_schedule::find_items(Game_object_vector& vec, int dist) {
+	// Look for blacksmith tools and materials
+	npc->find_nearby(vec, 994, dist, 0);    // Tongs
+	npc->find_nearby(vec, 623, dist, 0);    // Hammer
+	npc->find_nearby(vec, 668, dist, 0);    // Sword blank
+
+	// Make sure items are on the same floor as the NPC
+	int floor = npc->get_lift() / 5;
+	vec.erase(
+			std::remove_if(
+					vec.begin(), vec.end(),
+					[floor](Game_object* item) {
+						return item->get_lift() / 5 != floor;
+					}),
+			vec.end());
+
+	return vec.size();
+}
 
 void Forge_schedule::now_what() {
 	const Tile_coord npcpos = npc->get_tile();
@@ -4888,6 +4907,8 @@ void Forge_schedule::now_what() {
 		}
 		if (!blank_obj) {
 			blank_obj = std::make_shared<Ireg_game_object>(668, 0, 0, 0);
+			npc->add(blank_obj.get(), true);
+			add_object(blank_obj.get());
 		}
 		blank                    = Game_object_weak(blank_obj);
 		Game_object* firepit_obj = npc->find_closest(739);
@@ -4980,6 +5001,8 @@ void Forge_schedule::now_what() {
 		if (!tongs_obj) {
 			tongs_obj = std::make_shared<Ireg_game_object>(994, 0, 0, 0);
 			tongs     = Game_object_weak(tongs_obj);
+			npc->add(tongs_obj.get(), true);
+			add_object(tongs_obj.get());
 		}
 		npc->empty_hands();    // make sure the tongs can be equipped
 		npc->add_readied(tongs_obj.get(), lhand);
@@ -5033,6 +5056,8 @@ void Forge_schedule::now_what() {
 		if (!hammer_obj) {
 			hammer_obj = std::make_shared<Ireg_game_object>(623, 0, 0, 0);
 			hammer     = Game_object_weak(hammer_obj);
+			npc->add(hammer_obj.get(), true);
+			add_object(hammer_obj.get());
 		}
 		npc->add_dirty();
 		const Game_object_shared tongs_obj = tongs.lock();
@@ -5133,6 +5158,8 @@ void Forge_schedule::now_what() {
 		if (!tongs_obj) {
 			tongs_obj = std::make_shared<Ireg_game_object>(994, 0, 0, 0);
 			tongs     = Game_object_weak(tongs_obj);
+			npc->add(tongs_obj.get(), true);
+			add_object(tongs_obj.get());
 		}
 		npc->empty_hands();    // make sure the tongs can be equipped
 		npc->add_readied(tongs_obj.get(), lhand);
@@ -5213,15 +5240,16 @@ void Forge_schedule::now_what() {
 void Forge_schedule::ending(int new_type    // New schedule.
 ) {
 	ignore_unused_variable_warning(new_type);
+	cleanup();
 	// Remove any tools.
-	const Game_object_shared tongs_obj = tongs.lock();
+	/*const Game_object_shared tongs_obj = tongs.lock();
 	if (tongs_obj) {
 		tongs_obj->remove_this();
 	}
 	const Game_object_shared hammer_obj = hammer.lock();
 	if (hammer_obj) {
 		hammer_obj->remove_this();
-	}
+	}*/
 
 	Game_object*             firepit_obj = npc->find_closest(739);
 	Game_object*             bellows_obj = npc->find_closest(431);
