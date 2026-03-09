@@ -173,6 +173,29 @@ ${moddir}dir:=\$(U7PATH)/$basedest/mods
 		fi
 	done
 
+	# Find .shp files in subdirectories of .in file parent dirs not covered by
+	# .in files. These are loose shape files that should be installed alongside
+	# generated flex and usecode data.
+	if [[ -n "$infiles" ]]; then
+		for in_parent in $(for f in $infiles; do dirname "$f"; done | sort -u); do
+			for subdir in $(find "$in_parent" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort); do
+				subdir_name=$(basename "$subdir")
+				# Skip if a corresponding .in file exists for this subdirectory
+				if [[ ! -f "$in_parent/${subdir_name}.in" ]]; then
+					shp_files=$(find "$subdir" -maxdepth 1 -iname "*.shp" -type f | sort)
+					if [[ -n "$shp_files" ]]; then
+						while IFS= read -r shp; do
+							rel_path="${shp#$moddir/}"
+							shp_basename=$(basename "$shp")
+							datafiles_am="${datafiles_am}${t}${rel_path}${t}\\${n}"
+							datafiles_mingw="${datafiles_mingw}${t}cp ${rel_path} ${destdir_mingw}/${patchdir}${shp_basename}${n}"
+						done <<< "$shp_files"
+					fi
+				fi
+			done
+		done
+	fi
+
 	# Automake dest dir:
 	destdir_am="\$(datadir)/exult/$basedest/mods"
 	extradist_am="$extradist_am${t}\\${n}${t}\$(${moddir}_DATA)"
