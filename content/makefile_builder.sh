@@ -155,9 +155,11 @@ ${moddir}dir:=\$(U7PATH)/$basedest/mods
 		fpath="$(basename "$flexname")"
 		fname="${f#*$moddir/}"
 		fnamep="${patchdir}$fpath"
+		# Derive the base dir for dependencies from the .in file's location.
+		in_basedir="$(dirname "$fname")/"
 		skippedfirst="no"
 		# Parse, format and sort dependencies.
-		flist=$(sed '/^$/d' "$f" | while read -r g; do if [[ "$skippedfirst" == "no" ]]; then skippedfirst="yes"; else echo "	${sourcedir}graphics/${g#:*:}	\\"; fi; done | sort)
+		flist=$(sed '/^$/d' "$f" | while read -r g || [[ -n "$g" ]]; do if [[ "$skippedfirst" == "no" ]]; then skippedfirst="yes"; else echo "	${in_basedir}${g#:*:}	\\"; fi; done | sort)
 		if [[ -n "$flist" ]]; then
 			fnameu=$(echo "${fpath//./_}_OBJECTS" | tr "[:lower:]" "[:upper:]")
 			extradist_am="$extradist_am${t}\\${n}${t}\$($fnameu)"
