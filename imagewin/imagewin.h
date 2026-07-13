@@ -181,6 +181,11 @@ public:
 		int         z        = 0;        // Composite order (higher = on top).
 		bool        has_dest = false;    // Explicit destination override?
 		SDL_FRect   dest{};              // Destination rect (display coords).
+		// Optional composite rotation (degrees, clockwise) about angle_center
+		// (relative to the dest top-left). 0 = no rotation (the normal case). Used
+		// by the dragged item so it stays tilted to match the rotated world view.
+		double      angle = 0.0;
+		SDL_FPoint  angle_center{};
 		UiLayerKind ui_kind      = UiLayerDefault;
 		int         render_scale = 1;    // 1 = 1:1 upload; >1 = pre-scaled by
 										 // the game's scaler at this factor.
@@ -318,6 +323,7 @@ protected:
 	// the display, so screen_to_game()/game_to_screen() can map through it (mouse
 	// hit-testing + cursor placement line up with the scaled scene).
 	int active_scene_layer = -1;
+	bool rotate_view = false;
 	int inter_width;
 	int inter_height;
 	// Guardband around the edge of the draw surface to allow scalers to run
@@ -727,6 +733,7 @@ public:
 	// Mark a layer as fully opaque: no palette index is treated as transparent
 	// (for a full-screen scene whose content may legitimately use index 255).
 	void layer_set_opaque(int handle, bool opaque);
+	void layer_set_angle(int handle, double angle, float cx, float cy);
 
 	// Set palette.
 	virtual void set_palette(const unsigned char* rgbs, int maxval, int brightness = 100) {
@@ -820,6 +827,14 @@ public:
 
 	int get_active_scene_layer() const {
 		return active_scene_layer;
+	}
+
+	void set_rotate(bool on) {
+		rotate_view = on;
+	}
+
+	bool in_rotate_view() const {
+		return rotate_view;
 	}
 
 	/*

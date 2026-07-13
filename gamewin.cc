@@ -497,6 +497,61 @@ void Game_window::clear_screen(bool update) {
 }
 
 /*
+ *  Rotated-world view (experimental, toggled with Q).
+ *
+ *  Only the main game world is rotated; every UI element is a separate
+ *  compositing layer drawn on top afterwards, so it stays upright.
+ */
+
+// cos(45) == sin(45); cos(-45) == cos(45); sin(-45) == -sin(45).
+namespace {
+	constexpr float rotate_cos45 = 0.70710678f;
+	constexpr float rotate_sin45 = 0.70710678f;
+}
+
+void Game_window::set_rotate(bool on) {
+	if (rotate == on) {
+		return;
+	}
+	rotate = on;
+	// Tell the window so it rotates the main game texture when compositing.
+	win->set_rotate(on);
+	// Repaint everything at the new orientation.
+	set_all_dirty();
+	paint_dirty();
+}
+
+// Rotate a game-area point +45 degrees about the view centre (world -> screen).
+void Game_window::rotate45(int& x, int& y) const {
+	if (!rotate) {
+		return;
+	}
+	const int   cx = get_game_width() / 2;
+	const int   cy = get_game_height() / 2;
+	const float ox = static_cast<float>(x - cx);
+	const float oy = static_cast<float>(y - cy);
+	x = static_cast<int>(ox * rotate_cos45 - oy * rotate_sin45 + 0.5f) + cx;
+	y = static_cast<int>(ox * rotate_sin45 + oy * rotate_cos45 + 0.5f) + cy;
+}
+
+// Rotate a game-area point -45 degrees about the view centre (screen -> world).
+// A mouse position produced by screen_to_game() (which is unaware of the
+// rotation) is mapped back to the world tile that is actually drawn there.
+void Game_window::map_to_rotated_map(int& x, int& y) const {
+	if (!rotate) {
+		return;
+	}
+	const int   cx = get_game_width() / 2;
+	const int   cy = get_game_height() / 2;
+	const float ox = static_cast<float>(x - cx);
+	const float oy = static_cast<float>(y - cy);
+	// Inverse rotation: cos(-45)=cos(45), sin(-45)=-sin(45).
+	x = static_cast<int>(ox * rotate_cos45 + oy * rotate_sin45 + 0.5f) + cx;
+	y = static_cast<int>(-ox * rotate_sin45 + oy * rotate_cos45 + 0.5f) + cy;
+}
+
+/*
+
  *  Deleting game window.
  */
 
@@ -1869,6 +1924,9 @@ void Game_window::start_actor(
 	if (gump_man->gump_mode() && !gump_man->gumps_dont_pause_game()) {
 		return;
 	}
+	// Map the click to the world tile actually drawn there (no-op unless the
+	// rotated view is on).
+	map_to_rotated_map(winx, winy);
 	//	teleported = 0;
 	if (moving_barge) {
 		// Want to move center there.
@@ -1929,6 +1987,9 @@ void Game_window::start_actor_along_path(
 	//	teleported = 0;
 	const int        lift       = main_actor->get_lift();
 	const int        liftpixels = 4 * lift;    // Figure abs. tile.
+	// Map the click to the world tile actually drawn there (no-op unless the
+	// rotated view is on).
+	map_to_rotated_map(winx, winy);
 	const Tile_coord dest(
 			get_scrolltx() + (winx + liftpixels) / c_tilesize, get_scrollty() + (winy + liftpixels) / c_tilesize, lift);
 	if (!main_actor->walk_path_to_tile(dest, speed)) {
@@ -2198,6 +2259,7 @@ void Game_window::show_items(
 			obj = gump->get_cont_or_actor(gx, gy);
 		}
 	} else {    // Search rest of world.
+		map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 		obj = find_object(x, y);
 	}
 
@@ -2351,6 +2413,7 @@ void Game_window::paused_combat_select(
 	if (gump) {
 		return;    // Ignore if clicked on gump.
 	}
+	map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 	Game_object* obj = find_object(x, y);
 	Actor*       npc = obj ? obj->as_actor() : nullptr;
 	if (!npc || !npc->is_in_party() || npc->get_flag(Obj_flags::asleep) || npc->is_dead() || npc->get_flag(Obj_flags::paralyzed)
@@ -2367,6 +2430,7 @@ void Game_window::paused_combat_select(
 	if (!Get_click(x, y, Mouse::greenselect, nullptr, true)) {
 		return;
 	}
+	map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 	obj = find_object(x, y);    // Find it.
 	if (!obj) {                 // Nothing?  Walk there.
 		// Needs work if lift > 0.
@@ -2436,6 +2500,7 @@ void Game_window::double_clicked(
 
 	// If gump manager didn't handle it, we search the world for an object
 	if (!gump) {
+		map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 		obj = find_object(x, y);
 		if (!avatar_can_act && obj && obj->as_actor() && obj->as_actor() == main_actor->as_actor()) {
 			ActionFileGump(nullptr);

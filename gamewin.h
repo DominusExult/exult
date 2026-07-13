@@ -185,6 +185,7 @@ public:
 	bool   walk_in_formation;    // Use Party_manager for walking.
 	int    debug;
 	uint32 blits;    // For frame-counting.
+	bool rotate = false;
 	/*
 	 *  Class maintenance:
 	 */
@@ -448,6 +449,10 @@ public:
 
 	void layer_set_opaque(int handle, bool opaque) {
 		win->layer_set_opaque(handle, opaque);
+	}
+
+	void layer_set_angle(int handle, double angle, float cx, float cy) {
+		win->layer_set_angle(handle, angle, cx, cy);
 	}
 
 	bool layer_is_visible(int handle) {
@@ -772,6 +777,15 @@ public:
 	void paint();    // Paint whole image.
 	// Paint 'dirty' rectangle.
 	void paint_dirty();
+
+	// Rotated-world view (experimental, toggled with Q):
+	void set_rotate(bool on);    // Turn the rotated view on/off.
+	// Rotate a game-area point +/-45 degrees about the view centre. rotate45()
+	// maps a world point to its on-screen position; map_to_rotated_map() maps an
+	// on-screen/game point back to the world position drawn there (used for mouse
+	// hit-testing). Both are no-ops when 'rotate' is false.
+	void rotate45(int& x, int& y) const;
+	void map_to_rotated_map(int& x, int& y) const;
 
 	void set_all_dirty() {    // Whole window.
 		dirty = TileRect(win->get_start_x(), win->get_start_y(), win->get_full_width(), win->get_full_height());

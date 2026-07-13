@@ -1595,6 +1595,15 @@ void Image_window::layer_set_opaque(int handle, bool opaque) {
 	}
 }
 
+void Image_window::layer_set_angle(int handle, double angle, float cx, float cy) {
+	if (handle < 0 || handle >= static_cast<int>(layers.size()) || !layers[handle]) {
+		return;
+	}
+	layers[handle]->angle          = angle;
+	layers[handle]->angle_center.x = cx;
+	layers[handle]->angle_center.y = cy;
+}
+
 bool Image_window::layer_is_visible(int handle) {
 	if (handle < 0 || handle >= static_cast<int>(layers.size()) || !layers[handle]) {
 		return false;
@@ -2067,7 +2076,14 @@ void Image_window::composite_layers() {
 		SDL_SetTextureAlphaMod(layer.texture, layer.alpha);
 		SDL_FRect dst;
 		get_layer_dest(layer, dst);
-		SDL_RenderTexture(screen_renderer, layer.texture, nullptr, &dst);
+		if (layer.angle != 0.0) {
+			// Rotate this layer in place (used by the dragged item so it stays
+			// tilted with the rotated world view).
+			SDL_RenderTextureRotated(
+					screen_renderer, layer.texture, nullptr, &dst, layer.angle, &layer.angle_center, SDL_FLIP_NONE);
+		} else {
+			SDL_RenderTexture(screen_renderer, layer.texture, nullptr, &dst);
+		}
 	}
 }
 
@@ -2081,7 +2097,43 @@ void Image_window::UpdateRect(SDL_Surface* surf) {
 									   : static_cast<uint8*>(surf->pixels) + guard_band * scale * surf_format->bytes_per_pixel
 												 + guard_band * scale * surf->pitch);
 	SDL_UpdateTexture(screen_texture, nullptr, pixels, surf->pitch);
-	SDL_RenderTexture(screen_renderer, screen_texture, nullptr, nullptr);
+	if (rotate_view) {
+		// Experimental rotated-world view: draw the main game texture rotated
+		// ~45 degrees. The overlay layers are composited afterwards and stay
+		// upright.
+		int                             lw = 0;
+		int                             lh = 0;
+		SDL_RendererLogicalPresentation mode;
+		if (!SDL_GetRenderLogicalPresentation(screen_renderer, &lw, &lh, &mode) || lw <= 0 || lh <= 0) {
+			// Fall back to the un-rotated draw if we can't determine the size.
+			SDL_RenderTexture(screen_renderer, screen_texture, nullptr, nullptr);
+		} else {
+			SDL_SetRenderDrawColor(screen_renderer, 0, 0, 0, 255);
+			SDL_RenderClear(screen_renderer);
+			// Rotate about the on-screen game-area centre so it matches the
+			// coordinate mapping (Game_window::map_to_rotated_map / rotate45 rotate
+			// about the game-area centre); game_to_screen() converts that centre to
+			// display coordinates.
+			int ccx = lw / 2;
+			int ccy = lh / 2;
+			game_to_screen(get_game_width() / 2, get_game_height() / 2, false, ccx, ccy);
+			const SDL_FRect  dst{0.f, 0.f, static_cast<float>(lw), static_cast<float>(lh)};
+			const SDL_FPoint center{static_cast<float>(ccx), static_cast<float>(ccy)};
+			// Fill corner gaps first with a larger, dimmer rotated underlay. This
+			// keeps the simple SDL rotation path (no extra world buffers) and does
+			// not affect input mapping/gameplay; only visuals in the far corners.
+			constexpr float corner_fill_scale = 2.0f;
+			const float     bw               = static_cast<float>(lw) * corner_fill_scale;
+			const float     bh               = static_cast<float>(lh) * corner_fill_scale;
+			const SDL_FRect bgdst{static_cast<float>(ccx) - bw * 0.5f, static_cast<float>(ccy) - bh * 0.5f, bw, bh};
+			SDL_SetTextureAlphaMod(screen_texture, 170);
+			SDL_RenderTextureRotated(screen_renderer, screen_texture, nullptr, &bgdst, 45.0, &center, SDL_FLIP_NONE);
+			SDL_SetTextureAlphaMod(screen_texture, 255);
+			SDL_RenderTextureRotated(screen_renderer, screen_texture, nullptr, &dst, 45.0, &center, SDL_FLIP_NONE);
+		}
+	} else {
+		SDL_RenderTexture(screen_renderer, screen_texture, nullptr, nullptr);
+	}
 	// Draw overlay layers on top of the main image, before presenting.
 	composite_layers();
 	SDL_RenderPresent(screen_renderer);
