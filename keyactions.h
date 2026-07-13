@@ -33,6 +33,7 @@ void ActionOldFileGump(const int* params);
 
 void ActionScreenshot(const int* params);
 void ActionRepaint(const int* params);
+void ActionRotateWorld(const int* params);
 void ActionScalevalIncrease(const int* params);
 void ActionScalevalDecrease(const int* params);
 void ActionBrighter(const int* params);

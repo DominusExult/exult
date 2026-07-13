@@ -186,6 +186,7 @@ const struct Action {
 		{       "ROTATE_FRAMES",       ActionRotateFrames,           nullptr, 0x853, Action::mapedit_keys,         NONE,  true,  true,  true, false},
 		{       "WRITE_MINIMAP",       ActionWriteMiniMap,           nullptr, 0x854, Action::mapedit_keys,         NONE, false,  true,  true, false},
 		{             "REPAINT",            ActionRepaint,           nullptr, 0x855,    Action::dont_show,         NONE,  true,  true,  true, false},
+		{ "TOGGLE_ROTATE_WORLD",        ActionRotateWorld,           nullptr, 0x859,    Action::dont_show,         NONE, false,  true,  true, false},
 		{       "TOGGLE_BBOXES",       ActionToggleBBoxes,           nullptr, 0x856, Action::mapedit_keys,         NONE, false,  true,  true, false},
 		{                    "",                  nullptr,           nullptr,     0,    Action::dont_show,         NONE, false, false, false, false}  //  terminator
 		// clang-format on

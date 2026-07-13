@@ -1595,6 +1595,15 @@ void Image_window::layer_set_opaque(int handle, bool opaque) {
 	}
 }
 
+void Image_window::layer_set_angle(int handle, double angle, float cx, float cy) {
+	if (handle < 0 || handle >= static_cast<int>(layers.size()) || !layers[handle]) {
+		return;
+	}
+	layers[handle]->angle          = angle;
+	layers[handle]->angle_center.x = cx;
+	layers[handle]->angle_center.y = cy;
+}
+
 bool Image_window::layer_is_visible(int handle) {
 	if (handle < 0 || handle >= static_cast<int>(layers.size()) || !layers[handle]) {
 		return false;
@@ -1658,6 +1667,14 @@ void Image_window::layer_set_ui_kind(int handle, UiLayerKind kind) {
 	layers[handle]->ui_kind = kind;
 }
 
+void Image_window::layer_set_game_scaler(int handle, bool on) {
+	if (handle < 0 || handle >= static_cast<int>(layers.size()) || !layers[handle]) {
+		return;
+	}
+	layers[handle]->game_scaler = on;
+	layers[handle]->set_dirty();
+}
+
 void Image_window::mark_all_layers_dirty() {
 	for (auto& lp : layers) {
 		if (lp) {
@@ -1667,8 +1684,19 @@ void Image_window::mark_all_layers_dirty() {
 }
 
 int Image_window::layer_render_scale(const Layer& layer) const {
-	const UiLayerConfig& cfg     = get_ui_cfg(layer.ui_kind);
-	const int            uscaler = eff_ui_scaler(cfg);
+	// The rotated-world layer scales with the GAME's scaler/scale so it looks
+	// exactly like the normal (un-rotated) game pipeline; other layers use
+	// their UI layer config.
+	int uscaler;
+	int uscale;
+	if (layer.game_scaler) {
+		uscaler = scaler;
+		uscale  = scale;
+	} else {
+		const UiLayerConfig& cfg = get_ui_cfg(layer.ui_kind);
+		uscaler                  = eff_ui_scaler(cfg);
+		uscale                   = eff_ui_scale(cfg);
+	}
 	if (uscaler < 0 || static_cast<size_t>(uscaler) >= Scalers.size()) {
 		return 1;
 	}
@@ -1684,7 +1712,6 @@ int Image_window::layer_render_scale(const Layer& layer) const {
 			return f;
 		}
 	}
-	const int uscale = eff_ui_scale(cfg);
 	if (uscale >= 2 && (mask & (1u << (uscale - 1))) != 0) {
 		return uscale;
 	}
@@ -1695,8 +1722,15 @@ bool Image_window::scale_layer_color(const Layer& layer, SDL_Surface* src8, int 
 	if (src8 == nullptr || dst32 == nullptr || ibuf == nullptr) {
 		return false;
 	}
-	const UiLayerConfig& cfg     = get_ui_cfg(layer.ui_kind);
-	const int            uscaler = eff_ui_scaler(cfg);
+	// Same scaler selection as layer_render_scale(): the game's scaler for the
+	// rotated-world layer, the UI layer config otherwise.
+	int uscaler;
+	if (layer.game_scaler) {
+		uscaler = scaler;
+	} else {
+		const UiLayerConfig& cfg = get_ui_cfg(layer.ui_kind);
+		uscaler                  = eff_ui_scaler(cfg);
+	}
 	if (uscaler < 0 || static_cast<size_t>(uscaler) >= Scalers.size()) {
 		return false;
 	}
@@ -2035,9 +2069,13 @@ void Image_window::composite_layers() {
 	for (Layer* lptr : ordered) {
 		Layer&               layer = *lptr;
 		const UiLayerConfig& cfg   = get_ui_cfg(layer.ui_kind);
-		// Match filtering to this layer's scaler/fill scaler.
-		const bool smooth = (eff_ui_scaler(cfg) == bilinear) || (eff_ui_scaler(cfg) == SDLScaler)
-							|| (eff_ui_fill_scaler(cfg) == bilinear) || (eff_ui_fill_scaler(cfg) == SDLScaler);
+		// Match filtering to this layer's scaler/fill scaler (the game's own
+		// scalers for the rotated-world layer).
+		const bool smooth = layer.game_scaler
+									? (scaler == bilinear || scaler == SDLScaler || fill_scaler == bilinear
+									   || fill_scaler == SDLScaler)
+									: (eff_ui_scaler(cfg) == bilinear) || (eff_ui_scaler(cfg) == SDLScaler)
+											  || (eff_ui_fill_scaler(cfg) == bilinear) || (eff_ui_fill_scaler(cfg) == SDLScaler);
 		const SDL_ScaleMode smode = smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST;
 		// If a software (member) scaler is active, layers are pre-scaled by it
 		// to this factor; otherwise they are uploaded 1:1 and scaled on the GPU.
@@ -2067,7 +2105,14 @@ void Image_window::composite_layers() {
 		SDL_SetTextureAlphaMod(layer.texture, layer.alpha);
 		SDL_FRect dst;
 		get_layer_dest(layer, dst);
-		SDL_RenderTexture(screen_renderer, layer.texture, nullptr, &dst);
+		if (layer.angle != 0.0) {
+			// Rotate this layer in place (used by the dragged item so it stays
+			// tilted with the rotated world view).
+			SDL_RenderTextureRotated(
+					screen_renderer, layer.texture, nullptr, &dst, layer.angle, &layer.angle_center, SDL_FLIP_NONE);
+		} else {
+			SDL_RenderTexture(screen_renderer, layer.texture, nullptr, &dst);
+		}
 	}
 }
 

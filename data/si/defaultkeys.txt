@@ -1,5 +1,7 @@
 # default key bindings
 
+Q		toggle_rotate_world	# Toggle rotated world view (experimental)
+
 Alt-KP+		brighter
 Alt-KP- 	darker
 Esc		close_or_menu

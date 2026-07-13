@@ -35,6 +35,7 @@
 #include "gameclk.h"
 #include "gamemap.h"
 #include "gamewin.h"
+#include "ibuf8.h"
 #include "ignore_unused_variable_warning.h"
 #include "objiter.h"
 
@@ -320,6 +321,43 @@ void Game_render::increment_bbox_index() {
 }
 
 /*
+ *  Render the world (and effects) into the square rotate layer.
+ *
+ *  The layer is bigger than the game area (side ~ sqrt(2) * the longest game
+ *  dimension) so that, drawn rotated 45 degrees below the other layers, it
+ *  covers the whole game area with no black corners. The camera is shifted
+ *  back by the (whole-tile) layer margins so the normal view lands centred in
+ *  it; the surrounding world fills what becomes the corners. The layer goes
+ *  through the normal layer pipeline, so the configured scalers still apply.
+ *
+ */
+int Game_window::paint_rotate_world() {
+	Image_buffer8* rbuf = get_layer_ibuf(rotate_layer);
+	if (rbuf == nullptr) {
+		return 0;
+	}
+	// Shift the camera back by the whole-tile margins (the sub-tile scroll
+	// offset is unchanged) so the normal view is centred in the square layer.
+	const int saved_tx = scrolltx;
+	const int saved_ty = scrollty;
+	scrolltx           = (scrolltx - rotate_margin_x / c_tilesize + c_num_tiles) % c_num_tiles;
+	scrollty           = (scrollty - rotate_margin_y / c_tilesize + c_num_tiles) % c_num_tiles;
+
+	Image_buffer8* prev = push_render_target(rbuf);
+	rbuf->set_clip(0, 0, rotate_dim, rotate_dim);
+	rbuf->fill8(0);    // Black beyond the map edges.
+	const int light_sources = render->paint_map(0, 0, rotate_dim, rotate_dim);
+	effects->paint();    // Draw sprites (weather may not reach the corners yet).
+	rbuf->clear_clip();
+	pop_render_target(prev);
+
+	scrolltx = saved_tx;
+	scrollty = saved_ty;
+	layer_set_dirty(rotate_layer);
+	return light_sources;
+}
+
+/*
  *  Paint a rectangle in the window by pulling in vga chunks.
  */
 
@@ -354,29 +392,34 @@ void Game_window::paint(
 
 	int light_sources = 0;
 
-	if (main_actor) {
-		light_sources = render->paint_map(gx, gy, gw, gh);
+	if (rotate && main_actor && rotate_layer >= 0) {
+		win->set_clip(x, y, w, h);
+		light_sources = paint_rotate_world();
 	} else {
-		win->fill8(0);
-	}
+		if (main_actor) {
+			light_sources = render->paint_map(gx, gy, gw, gh);
+		} else {
+			win->fill8(0);
+		}
 
-	effects->paint();    // Draw sprites.
+		effects->paint();    // Draw sprites.
 
-	win->set_clip(x, y, w, h);    // Clip to this area.
-	// Fill black into unpainted regions
-	if (y < 0) {
-		win->fill8(pal->get_border_index(), w, -y, x, y);    // Region above window
-	}
-	if (x < 0) {
-		win->fill8(pal->get_border_index(), -x, get_height(), x,
-				   0);    // Region left of window
-	}
-	if ((x + w) > get_width()) {
-		win->fill8(pal->get_border_index(), (x + w) - get_width(), get_height(), get_width(), 0);    // Region right of window
-	}
-	if ((y + h) > get_height()) {
-		win->fill8(pal->get_border_index(), w, (y + h) - get_height(), x,
-				   get_height());    // below window
+		win->set_clip(x, y, w, h);    // Clip to this area.
+		// Fill black into unpainted regions
+		if (y < 0) {
+			win->fill8(pal->get_border_index(), w, -y, x, y);    // Region above window
+		}
+		if (x < 0) {
+			win->fill8(pal->get_border_index(), -x, get_height(), x,
+					   0);    // Region left of window
+		}
+		if ((x + w) > get_width()) {
+			win->fill8(pal->get_border_index(), (x + w) - get_width(), get_height(), get_width(), 0);    // Region right of window
+		}
+		if ((y + h) > get_height()) {
+			win->fill8(pal->get_border_index(), w, (y + h) - get_height(), x,
+					   get_height());    // below window
+		}
 	}
 
 	gump_man->paint(false);

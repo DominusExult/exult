@@ -132,12 +132,21 @@ Dragging_info::Dragging_info(
 			return;
 		}
 	} else if (x > 0 && y > 0 && x < gwin->get_width() && y < gwin->get_height()) {    // Not found in gump?
-		to_drag = gwin->find_object(x, y);
+		// When the rotated view is on, map the click to the world tile actually
+		// drawn under the cursor (no-op otherwise).
+		int wx = x;
+		int wy = y;
+		gwin->map_to_rotated_map(wx, wy);
+		to_drag = gwin->find_object(wx, wy);
 		if (!to_drag) {
 			return;
 		}
 		// Get coord. where painted.
 		gwin->get_shape_location(to_drag, paintx, painty);
+		// The dragged-item overlay follows the (unrotated) mouse-pointer layer, so
+		// convert the grab point to screen-game coordinates when the world is
+		// rotated (no-op otherwise).
+		gwin->rotate45(paintx, painty);
 		old_pos  = to_drag->get_tile();
 		old_foot = to_drag->get_footprint();
 	}
@@ -403,6 +412,14 @@ void Dragging_info::paint_obj_to_layer() {
 	const int   dx = static_cast<int>(ox - xleft * sx);
 	const int   dy = static_cast<int>(oy - yabove * sy);
 	gwin->layer_set_dest(item_layer, dx, dy, static_cast<int>(w * sx), static_cast<int>(h * sy));
+	// When the world is rotated, tilt the dragged item the same way, about its
+	// anchor, so it stays aligned with how it was drawn in the world (no "un-tilt"
+	// jump on pick-up). Otherwise draw it upright.
+	if (gwin->rotate) {
+		gwin->layer_set_angle(item_layer, 45.0, xleft * sx, yabove * sy);
+	} else {
+		gwin->layer_set_angle(item_layer, 0.0, 0.0f, 0.0f);
+	}
 	gwin->layer_set_visible(item_layer, true);
 }
 
@@ -634,8 +651,10 @@ bool Dragging_info::drop_on_map(
 		int x, int y,           // Mouse position.
 		Game_object* to_drop    // == obj if whole thing.
 ) {
-	// Attempting to drop off screen?
-	if (x < 0 || y < 0 || x >= gwin->get_width() || y >= gwin->get_height()) {
+	// Attempting to drop off screen?  With the rotated view, x,y are already
+	// world coordinates and can legitimately fall outside the (unrotated) game
+	// area, so skip the off-screen rejection then.
+	if (!gwin->rotate && (x < 0 || y < 0 || x >= gwin->get_width() || y >= gwin->get_height())) {
 		Mouse::mouse()->flash_shape(Mouse::redx);
 		Audio::get_ptr()->play_sound_effect(Audio::game_sfx(76));
 		return false;
@@ -649,7 +668,9 @@ bool Dragging_info::drop_on_map(
 	// Drop where we last painted it.
 	int posx = paintx;
 	int posy = painty;
-	if (posx == -1000) {    // Unless we never painted.
+	// When the world is rotated, paintx/painty hold the (rotated) screen grab
+	// point, which is not a world coordinate, so drop at the mapped x,y instead.
+	if (posx == -1000 || gwin->rotate) {    // Unless we never painted, or rotated.
 		posx = x;
 		posy = y;
 	}
@@ -749,8 +770,13 @@ bool Dragging_info::drop(
 			to_drop->set_flag(Obj_flags::is_temporary);
 		}
 	}
-	// Drop it.
-	if (!(on_gump ? drop_on_gump(x, y, to_drop, on_gump) : drop_on_map(x, y, to_drop))) {
+	// Drop it. Gumps are unrotated overlay layers, so keep the raw x,y for the
+	// gump drop; the map drop needs the world tile under the cursor, so map it
+	// (no-op unless the rotated view is on).
+	int mx = x;
+	int my = y;
+	gwin->map_to_rotated_map(mx, my);
+	if (!(on_gump ? drop_on_gump(x, y, to_drop, on_gump) : drop_on_map(mx, my, to_drop))) {
 		return false;
 	}
 	// Make a 'dropped' sound.

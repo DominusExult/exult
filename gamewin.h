@@ -185,6 +185,17 @@ public:
 	bool   walk_in_formation;    // Use Party_manager for walking.
 	int    debug;
 	uint32 blits;    // For frame-counting.
+	bool rotate = false;
+	// While rotating, the world is rendered into its own square overlay layer
+	// (side ~= sqrt(2) * the longest game dimension, drawn rotated below every
+	// other layer) so the whole game area is covered with no black corners. The
+	// layer goes through the normal layer pipeline, so the configured scalers
+	// still apply. rotate_margin_* are the whole-tile offsets of the game view
+	// within the (centred) square layer.
+	int rotate_layer    = -1;
+	int rotate_dim      = 0;
+	int rotate_margin_x = 0;
+	int rotate_margin_y = 0;
 	/*
 	 *  Class maintenance:
 	 */
@@ -450,6 +461,10 @@ public:
 		win->layer_set_opaque(handle, opaque);
 	}
 
+	void layer_set_angle(int handle, double angle, float cx, float cy) {
+		win->layer_set_angle(handle, angle, cx, cy);
+	}
+
 	bool layer_is_visible(int handle) {
 		return win->layer_is_visible(handle);
 	}
@@ -468,6 +483,10 @@ public:
 
 	void layer_set_ui_kind(int handle, Image_window::UiLayerKind kind) {
 		win->layer_set_ui_kind(handle, kind);
+	}
+
+	void layer_set_game_scaler(int handle, bool on) {
+		win->layer_set_game_scaler(handle, on);
 	}
 
 	void layer_set_index_argb(int handle, const uint32* argb256) {
@@ -772,6 +791,11 @@ public:
 	void paint();    // Paint whole image.
 	// Paint 'dirty' rectangle.
 	void paint_dirty();
+
+	void set_rotate(bool on);    // Turn the rotated view on/off.
+	void rotate45(int& x, int& y) const;
+	void map_to_rotated_map(int& x, int& y) const;
+	int paint_rotate_world();
 
 	void set_all_dirty() {    // Whole window.
 		dirty = TileRect(win->get_start_x(), win->get_start_y(), win->get_full_width(), win->get_full_height());

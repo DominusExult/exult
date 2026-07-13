@@ -497,6 +497,111 @@ void Game_window::clear_screen(bool update) {
 }
 
 /*
+ *  Rotated-world view (experimental, toggled with Q).
+ *
+ *  Only the main game world is rotated; every UI element is a separate
+ *  compositing layer drawn on top afterwards, so it stays upright.
+ */
+
+// cos(45) == sin(45); cos(-45) == cos(45); sin(-45) == -sin(45).
+namespace {
+	constexpr float rotate_cos45 = 0.70710678f;
+	constexpr float rotate_sin45 = 0.70710678f;
+	// The rotated world layer draws below every other layer (gumps, HUD, text,
+	// mouse all use z >= -1).
+	constexpr int rotate_world_layer_z = -(1 << 20);
+}
+
+void Game_window::set_rotate(bool on) {
+	if (rotate == on) {
+		return;
+	}
+	rotate = on;
+	if (on) {
+		// Square world layer whose side is ~sqrt(2) * the longest game dimension,
+		// rounded up to whole tiles. Rotated 45 degrees it covers the diamond
+		// |x|+|y| <= side/sqrt(2) = longest >= (gw+gh)/2 about the centre, so the
+		// whole game area is always covered — no black corners.
+		const int gw      = get_game_width();
+		const int gh      = get_game_height();
+		const int longest = gw > gh ? gw : gh;
+		int       dim     = static_cast<int>(longest * 1.41421356f) + 1;
+		dim               = ((dim + 2 * c_tilesize - 1) / (2 * c_tilesize)) * (2 * c_tilesize);
+		rotate_layer      = create_layer(dim, dim, 255, 0, rotate_world_layer_z);
+		if (rotate_layer < 0) {
+			rotate = false;
+			return;
+		}
+		rotate_dim = dim;
+		// Whole-tile margins (near-)centring the game view in the layer, so the
+		// camera can be shifted back by a whole number of tiles when rendering.
+		rotate_margin_x = ((dim - gw) / 2 / c_tilesize) * c_tilesize;
+		rotate_margin_y = ((dim - gh) / 2 / c_tilesize) * c_tilesize;
+		layer_set_opaque(rotate_layer, true);
+		// Pre-scale the layer with the GAME's scaler (not the UI layer config) so
+		// the rotated world looks exactly like the normal game pipeline.
+		layer_set_game_scaler(rotate_layer, true);
+		// Map the layer's game-view sub-rect (at the margins) onto the display
+		// area the un-rotated world occupies, and rotate about the on-screen game
+		// centre so the view matches map_to_rotated_map()/rotate45().
+		int dg0x = 0;
+		int dg0y = 0;
+		int dg1x = 0;
+		int dg1y = 0;
+		win->game_to_screen(0, 0, false, dg0x, dg0y);
+		win->game_to_screen(gw, gh, false, dg1x, dg1y);
+		const float sx   = static_cast<float>(dg1x - dg0x) / gw;
+		const float sy   = static_cast<float>(dg1y - dg0y) / gh;
+		const int   dstx = static_cast<int>(dg0x - rotate_margin_x * sx);
+		const int   dsty = static_cast<int>(dg0y - rotate_margin_y * sy);
+		layer_set_dest(rotate_layer, dstx, dsty, static_cast<int>(dim * sx + 0.5f), static_cast<int>(dim * sy + 0.5f));
+		int gcx = 0;
+		int gcy = 0;
+		win->game_to_screen(gw / 2, gh / 2, false, gcx, gcy);
+		layer_set_angle(rotate_layer, 45.0, gcx - dstx, gcy - dsty);
+	} else {
+		destroy_layer(rotate_layer);
+		rotate_layer    = -1;
+		rotate_dim      = 0;
+		rotate_margin_x = 0;
+		rotate_margin_y = 0;
+	}
+	// Repaint everything at the new orientation.
+	set_all_dirty();
+	paint_dirty();
+}
+
+// Rotate a game-area point +45 degrees about the view centre (world -> screen).
+void Game_window::rotate45(int& x, int& y) const {
+	if (!rotate) {
+		return;
+	}
+	const int   cx = get_game_width() / 2;
+	const int   cy = get_game_height() / 2;
+	const float ox = static_cast<float>(x - cx);
+	const float oy = static_cast<float>(y - cy);
+	x = static_cast<int>(ox * rotate_cos45 - oy * rotate_sin45 + 0.5f) + cx;
+	y = static_cast<int>(ox * rotate_sin45 + oy * rotate_cos45 + 0.5f) + cy;
+}
+
+// Rotate a game-area point -45 degrees about the view centre (screen -> world).
+// A mouse position produced by screen_to_game() (which is unaware of the
+// rotation) is mapped back to the world tile that is actually drawn there.
+void Game_window::map_to_rotated_map(int& x, int& y) const {
+	if (!rotate) {
+		return;
+	}
+	const int   cx = get_game_width() / 2;
+	const int   cy = get_game_height() / 2;
+	const float ox = static_cast<float>(x - cx);
+	const float oy = static_cast<float>(y - cy);
+	// Inverse rotation: cos(-45)=cos(45), sin(-45)=-sin(45).
+	x = static_cast<int>(ox * rotate_cos45 + oy * rotate_sin45 + 0.5f) + cx;
+	y = static_cast<int>(-ox * rotate_sin45 + oy * rotate_cos45 + 0.5f) + cy;
+}
+
+/*
+
  *  Deleting game window.
  */
 
@@ -918,6 +1023,11 @@ void Game_window::resized(
 	win->resized(neww, newh, newfs, newgw, newgh, newsc, newsclr, newfill, newfillsclr);
 	pal->apply(false);
 	Shape_frame::set_to_render(win->get_ib8());
+	if (rotate) {
+		// Rebuild the rotated-world layer for the new size/scale/placement.
+		set_rotate(false);
+		set_rotate(true);
+	}
 	if (!main_actor) {    // In case we're before start.
 		return;
 	}
@@ -1869,6 +1979,9 @@ void Game_window::start_actor(
 	if (gump_man->gump_mode() && !gump_man->gumps_dont_pause_game()) {
 		return;
 	}
+	// Map the click to the world tile actually drawn there (no-op unless the
+	// rotated view is on).
+	map_to_rotated_map(winx, winy);
 	//	teleported = 0;
 	if (moving_barge) {
 		// Want to move center there.
@@ -1929,6 +2042,9 @@ void Game_window::start_actor_along_path(
 	//	teleported = 0;
 	const int        lift       = main_actor->get_lift();
 	const int        liftpixels = 4 * lift;    // Figure abs. tile.
+	// Map the click to the world tile actually drawn there (no-op unless the
+	// rotated view is on).
+	map_to_rotated_map(winx, winy);
 	const Tile_coord dest(
 			get_scrolltx() + (winx + liftpixels) / c_tilesize, get_scrollty() + (winy + liftpixels) / c_tilesize, lift);
 	if (!main_actor->walk_path_to_tile(dest, speed)) {
@@ -2198,6 +2314,7 @@ void Game_window::show_items(
 			obj = gump->get_cont_or_actor(gx, gy);
 		}
 	} else {    // Search rest of world.
+		map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 		obj = find_object(x, y);
 	}
 
@@ -2351,6 +2468,7 @@ void Game_window::paused_combat_select(
 	if (gump) {
 		return;    // Ignore if clicked on gump.
 	}
+	map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 	Game_object* obj = find_object(x, y);
 	Actor*       npc = obj ? obj->as_actor() : nullptr;
 	if (!npc || !npc->is_in_party() || npc->get_flag(Obj_flags::asleep) || npc->is_dead() || npc->get_flag(Obj_flags::paralyzed)
@@ -2367,6 +2485,7 @@ void Game_window::paused_combat_select(
 	if (!Get_click(x, y, Mouse::greenselect, nullptr, true)) {
 		return;
 	}
+	map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 	obj = find_object(x, y);    // Find it.
 	if (!obj) {                 // Nothing?  Walk there.
 		// Needs work if lift > 0.
@@ -2436,6 +2555,7 @@ void Game_window::double_clicked(
 
 	// If gump manager didn't handle it, we search the world for an object
 	if (!gump) {
+		map_to_rotated_map(x, y);    // No-op unless the rotated view is on.
 		obj = find_object(x, y);
 		if (!avatar_can_act && obj && obj->as_actor() && obj->as_actor() == main_actor->as_actor()) {
 			ActionFileGump(nullptr);

@@ -181,7 +181,16 @@ public:
 		int         z        = 0;        // Composite order (higher = on top).
 		bool        has_dest = false;    // Explicit destination override?
 		SDL_FRect   dest{};              // Destination rect (display coords).
+		// Optional composite rotation (degrees, clockwise) about angle_center
+		// (relative to the dest top-left). 0 = no rotation (the normal case). Used
+		// by the dragged item so it stays tilted to match the rotated world view.
+		double      angle = 0.0;
+		SDL_FPoint  angle_center{};
 		UiLayerKind ui_kind      = UiLayerDefault;
+		// Scale this layer with the GAME's scaler/scale (not the UI layer
+		// config). Used by the rotated-world layer so the world keeps looking
+		// exactly as if it had gone through the normal game pipeline.
+		bool        game_scaler  = false;
 		int         render_scale = 1;    // 1 = 1:1 upload; >1 = pre-scaled by
 										 // the game's scaler at this factor.
 		unsigned char alpha = 255;       // Whole-layer opacity (255 = opaque).
@@ -670,6 +679,9 @@ public:
 	void layer_set_dest(int handle, int x, int y, int w, int h);
 	void layer_clear_dest(int handle);
 	void layer_set_ui_kind(int handle, UiLayerKind kind);
+	// Make the layer pre-scale with the game's scaler/scale instead of the UI
+	// layer config (used by the rotated-world layer).
+	void layer_set_game_scaler(int handle, bool on);
 	// Set (or clear, with nullptr) a layer's 256-entry ARGB override table.
 	// Non-zero entries replace the opaque palette colour for that index,
 	// carrying their own alpha (used for translucent pixels).
@@ -727,6 +739,10 @@ public:
 	// Mark a layer as fully opaque: no palette index is treated as transparent
 	// (for a full-screen scene whose content may legitimately use index 255).
 	void layer_set_opaque(int handle, bool opaque);
+	// Rotate a layer when compositing (degrees clockwise) about (cx,cy) relative
+	// to its dest top-left. angle 0 = no rotation. Used by the dragged item to
+	// stay tilted with the rotated world view.
+	void layer_set_angle(int handle, double angle, float cx, float cy);
 
 	// Set palette.
 	virtual void set_palette(const unsigned char* rgbs, int maxval, int brightness = 100) {

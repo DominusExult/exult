@@ -224,6 +224,13 @@ void ActionRepaint(const int* params) {
 	Game_window::get_instance()->paint();
 }
 
+//  { ActionRotateWorld, 0, "Toggle rotate world", dont_show, NONE },
+void ActionRotateWorld(const int* params) {
+	ignore_unused_variable_warning(params);
+	Game_window* gwin = Game_window::get_instance();
+	gwin->set_rotate(!gwin->rotate);
+}
+
 //  { ActionScalevalIncrease, 0, "Increase scaleval", cheat_keys, NONE },
 void ActionScalevalIncrease(const int* params) {
 	ignore_unused_variable_warning(params);
