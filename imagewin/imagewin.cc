@@ -2114,17 +2114,14 @@ void Image_window::composite_layers() {
 		Layer&               layer = *lptr;
 		const UiLayerConfig& cfg   = get_ui_cfg(layer.ui_kind);
 		// Match filtering to this layer's scaler/fill scaler.
-		const bool smooth = (eff_ui_scaler(cfg) == bilinear) || (eff_ui_scaler(cfg) == SDLScaler)
-							|| (eff_ui_fill_scaler(cfg) == bilinear) || (eff_ui_fill_scaler(cfg) == SDLScaler);
-		const SDL_ScaleMode smode = smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST;
-		// If a software (member) scaler is active, layers are pre-scaled by it
-		// to this factor; otherwise they are uploaded 1:1 and scaled on the GPU.
-		const int render_scale = layer_render_scale(layer);
 		const bool prim_smooth = (eff_ui_scaler(cfg) == bilinear) || (eff_ui_scaler(cfg) == SDLScaler);
 		const bool fill_smooth = (eff_ui_fill_scaler(cfg) == bilinear)
 								 || (eff_ui_fill_scaler(cfg) == SDLScaler && render_scale > 1);
 		const bool smooth = render_scale > 1 ? fill_smooth : (prim_smooth || fill_smooth);
 		const SDL_ScaleMode smode = smooth ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST;
+		// If a software (member) scaler is active, layers are pre-scaled by it
+		// to this factor; otherwise they are uploaded 1:1 and scaled on the GPU.
+		const int render_scale = layer_render_scale(layer);
 		// Recreate the texture if the render scale changed (its size depends
 		// on it) or it was dropped.
 		if (layer.render_scale != render_scale && layer.texture != nullptr) {
