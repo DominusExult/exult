@@ -302,16 +302,16 @@ void Image_window8::refresh_layer(Layer& layer) {
 	if (layer.render_scale > 1 && refresh_layer_scaled(layer, layer.render_scale)) {
 		return;
 	}
-	const int            w       = layer.get_width();
-	const int            h       = layer.get_height();
-	const bool           has_cov = static_cast<int>(layer.coverage.size()) == w * h;
-	const unsigned char* cov     = has_cov ? layer.coverage.data() : nullptr;
+	const int            w            = layer.get_width();
+	const int            h            = layer.get_height();
+	const bool           has_cov      = static_cast<int>(layer.coverage.size()) == w * h;
+	const unsigned char* cov          = has_cov ? layer.coverage.data() : nullptr;
 	SDL_Surface*         s            = layer.surface;
 	const size_t         spitch       = s->pitch;
 	const unsigned char* src          = reinterpret_cast<unsigned char*>(s->pixels) + spitch * guard_band + guard_band;
 	char*                pixels       = nullptr;
 	int                  pixels_pitch = 0;
-	
+
 	if (!SDL_LockTexture(layer.texture, nullptr, reinterpret_cast<void**>(&pixels), &pixels_pitch)) {
 		const char* err = SDL_GetError();
 		std::cerr << "refresh_layer: SDL_LockTexture failed trying to lock texture for layer " << layer.get_name() << ":"
@@ -362,7 +362,7 @@ bool Image_window8::refresh_layer_scaled(Layer& layer, int factor) {
 	const unsigned char* covbuf  = has_cov ? layer.coverage.data() : nullptr;
 	SDL_Surface*         lsurf   = layer.surface;
 	const size_t         spitch  = static_cast<size_t>(lsurf->pitch);
-	unsigned char* const src    = reinterpret_cast<unsigned char*>(lsurf->pixels) + guard_band + guard_band * spitch;
+	unsigned char* const src     = reinterpret_cast<unsigned char*>(lsurf->pixels) + guard_band + guard_band * spitch;
 
 	const unsigned char transp = layer.get_transparent();
 	const bool          has_ov = !layer.index_argb.empty();
@@ -440,9 +440,7 @@ bool Image_window8::refresh_layer_scaled(Layer& layer, int factor) {
 		if (odst) {
 			if (scale_layer_color(layer, lsurf, logw, logh, odst)) {
 				auto texpix = make_unique<uint32[]>(static_cast<size_t>(tex_w) * tex_h);
-
-				done = true;
-
+				done        = true;
 			}
 		}
 		if (scale_layer_color(layer, lsurf, logw, logh, odst)) {
@@ -652,7 +650,7 @@ bool Image_window8::refresh_layer_scaled(Layer& layer, int factor) {
 				}
 				const uint32 a     = static_cast<uint32>(cov * intrinsic / 255);
 				const uint32 cov_a = covbuf ? (a * covbuf[static_cast<size_t>(sy) * logw + x / factor]) / 255 : a;
-				trow[realx]            = (cov_a << 24) | rgb;
+				trow[realx]        = (cov_a << 24) | rgb;
 			}
 		}
 	} else {
@@ -662,7 +660,7 @@ bool Image_window8::refresh_layer_scaled(Layer& layer, int factor) {
 		for (int y = 0; y < tex_h; y++) {
 			const unsigned char* srow = src + static_cast<size_t>(y / factor) * spitch;
 			const unsigned char* crow = covbuf ? covbuf + static_cast<size_t>(y / factor) * logw : nullptr;
-			uint32* trow = reinterpret_cast<uint32*>(texpix + (static_cast<size_t>(y) + sgb) * texpix_pitch) + sgb;
+			uint32*              trow = reinterpret_cast<uint32*>(texpix + (static_cast<size_t>(y) + sgb) * texpix_pitch) + sgb;
 			for (int x = 0; x < tex_w; x++) {
 				uint32 argb = layer_argb_pixel(layer, srow[x / factor]);
 				if (crow) {
