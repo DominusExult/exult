@@ -696,45 +696,56 @@ namespace NaturalLight {
 		if (gmap == nullptr) {
 			return false;
 		}
-		constexpr int R         = 12;           // Search radius in tiles.
-		constexpr int W         = 2 * R + 1;    // Window width.
-		const int     base_tx   = start.tx - R;
-		const int     base_ty   = start.ty - R;
-		const int     wall_tz   = start.tz + 3;
-		auto          normalize = [](int t) {
-            return (t % c_num_tiles + c_num_tiles) % c_num_tiles;
+		auto normalize = [](int t) {
+			return (t % c_num_tiles + c_num_tiles) % c_num_tiles;
 		};
-		auto is_wall = [&](int tx, int ty) -> bool {
-			const int        wtx   = normalize(tx);
-			const int        wty   = normalize(ty);
-			Map_chunk* const chunk = gmap->get_chunk_safely(wtx / c_tiles_per_chunk, wty / c_tiles_per_chunk);
-			if (chunk == nullptr) {
-				return true;    // Unknown -> treat as blocking.
-			}
-			return chunk->is_tile_occupied(wtx % c_tiles_per_chunk, wty % c_tiles_per_chunk, wall_tz);
+		const int tgt_tx = normalize(target.tx);
+		const int tgt_ty = normalize(target.ty);
+		// Window centred midway between light and Avatar, sized to cover both
+		// plus slack for winding around furniture.  A fixed window centred on
+		// the light made torches in one big hall flip off the moment the
+		// Avatar crossed its edge (~12 tiles); the cap only bounds cost --
+		// lights that far away are outside any glow radius on screen.
+		const int dtx = Tile_coord::delta(normalize(start.tx), tgt_tx);
+		const int dty = Tile_coord::delta(normalize(start.ty), tgt_ty);
+		const int sep = std::max(std::abs(dtx), std::abs(dty));
+		const int R   = std::min(sep / 2 + 12, 40);    // Search radius in tiles.
+		const int W   = 2 * R + 1;                     // Window width.
+		if (sep / 2 + 12 > 40) {
+			return false;    // Too far for the flood to certify anything.
+		}
+		const int wall_tz = start.tz + 3;
+		const int base_tx = start.tx + dtx / 2 - R;
+		const int base_ty = start.ty + dty / 2 - R;
+		auto      is_wall = [&](int tx, int ty) -> bool {
+            const int        wtx   = normalize(tx);
+            const int        wty   = normalize(ty);
+            Map_chunk* const chunk = gmap->get_chunk_safely(wtx / c_tiles_per_chunk, wty / c_tiles_per_chunk);
+            if (chunk == nullptr) {
+                return true;    // Unknown -> treat as blocking.
+            }
+            return chunk->is_tile_occupied(wtx % c_tiles_per_chunk, wty % c_tiles_per_chunk, wall_tz);
 		};
-		const int tgt_tx    = normalize(target.tx);
-		const int tgt_ty    = normalize(target.ty);
-		auto      is_target = [&](int tx, int ty) -> bool {
-            const int ddx = std::abs(Tile_coord::delta(normalize(tx), tgt_tx));
-            const int ddy = std::abs(Tile_coord::delta(normalize(ty), tgt_ty));
-            return ddx <= 1 && ddy <= 1;
+		auto is_target = [&](int tx, int ty) -> bool {
+			const int ddx = std::abs(Tile_coord::delta(normalize(tx), tgt_tx));
+			const int ddy = std::abs(Tile_coord::delta(normalize(ty), tgt_ty));
+			return ddx <= 1 && ddy <= 1;
 		};
-		std::array<bool, W * W>                visited{};
-		std::array<std::pair<int, int>, W * W> queue{};
-		int                                    qhead = 0;
-		int                                    qtail = 0;
-		auto                                   push  = [&](int tx, int ty) {
+		std::vector<char>                visited(static_cast<size_t>(W) * W, 0);
+		std::vector<std::pair<int, int>> queue(static_cast<size_t>(W) * W);
+		int                              qhead = 0;
+		int                              qtail = 0;
+		auto                             push  = [&](int tx, int ty) {
             const int lx = tx - base_tx;
             const int ly = ty - base_ty;
             if (lx < 0 || lx >= W || ly < 0 || ly >= W) {
                 return;
             }
-            bool& seen = visited[ly * W + lx];
+            char& seen = visited[static_cast<size_t>(ly) * W + lx];
             if (seen) {
                 return;
             }
-            seen           = true;
+            seen           = 1;
             queue[qtail++] = {tx, ty};
 		};
 		push(start.tx, start.ty);
