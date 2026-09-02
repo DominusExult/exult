@@ -31,6 +31,7 @@ MAIN_OBJS:=actions.o \
 	npctime.o \
 	palette.o \
 	party.o \
+	perf.o \
 	paths.o \
 	playscene.o \
 	readnpcs.o \

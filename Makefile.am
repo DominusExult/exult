@@ -100,6 +100,8 @@ EXULTSOURCES =	\
 	palette.h	\
 	party.cc	\
 	party.h		\
+	perf.cc		\
+	perf.h		\
 	paths.cc	\
 	paths.h		\
 	headers/pent_include.h	\
