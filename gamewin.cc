@@ -1877,6 +1877,17 @@ void Game_window::build_light_layers() {
 				if (lr.is_spill && ceiling && roof_z < skip_above_actor) {
 					hidden_room = true;
 				}
+				// Viewer inside: a gated light whose ceiling is STILL DRAWN
+				// (a room under a deck while the Avatar stands under a higher
+				// ceiling) has an invisible interior -- the drawn slab covers
+				// it.  Its z-blind field would still wash the room's CLEAR
+				// wall pixels rising past the slab edge (a lit "crack" between
+				// floor-roof and wall).  Escaped light stays with its spills.
+				// Outside viewers keep the splat: its field paints the escaped
+				// ground light through openings (top = 0 keeps marks dark).
+				if (lr.mask_roof && inside && ceiling && roof_z < skip_above_actor) {
+					hidden_room = true;
+				}
 				if (lr.mask_roof) {
 					// Cutoff = the ceiling slab TOP's storey: anchor_z is the
 					// slab's BOTTOM lift while marks carry the top's storey, so
