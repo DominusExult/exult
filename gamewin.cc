@@ -1503,6 +1503,16 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 		const bool is_roof_shape = obj->get_info().is_roof() && obj->get_lift() > av_lift;
 		roof_like                = is_roof_shape || obj->get_lift() >= get_render_skip_lift();
 		const int top            = obj->get_lift() + obj->get_info().get_3d_height();
+		if (is_roof_shape && open_sky_above(top)) {
+			// A LOWER structure's exposed roof still drawn while inside (a
+			// gate passage, a porch below the viewer's storey -- the viewer's
+			// own ceiling is hidden, so it is never this).  As a 255 mark no
+			// light may touch it and it cuts a dark notch into the glow the
+			// upper windows wash down the facade; clear it so it samples the
+			// fields like the walls around it.
+			frame->paint_rle_transformed(roof_light_mask.get(), sx, sy, roof_clear);
+			return;
+		}
 		if (roof_like && !is_roof_shape && open_sky_above(top)) {
 			// An object standing on an open-sky deck (castle battlements):
 			// plain 128, so a spill from any storey lights its face (only the
@@ -1903,7 +1913,7 @@ void Game_window::build_light_layers() {
 				NaturalLight::Splat_radial_light(
 						covp, dstpix, srcpix, W, H, dst_lw, src_lw, csx, csy, lr.radius, lr.elevation, lr.dist_bias,
 						lr.spill_percent, roofpix, roof_lw, mask_roof, lr.is_spill, spill_floor, light_top_storey, lr.ltz / 5,
-						field_anchor_z, grid, grid_rt, grid_fx, grid_fy, cx0, cy0, cx1, cy1);
+						field_anchor_z, grid, grid_rt, grid_fx, grid_fy, inside, cx0, cy0, cx1, cy1);
 			}
 			// Match Splat_radial_light's reach: only an ELEVATED spill's
 			// dome extends sqrt(r^2 + 2*r*bias), capped at 1.5r.
