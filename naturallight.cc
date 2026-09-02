@@ -1185,10 +1185,10 @@ namespace NaturalLight {
                 {-1,  1},
                 {-1, -1}
         };
-		// The light's own tile is always lit -- the flame is visible there.
-		lit[static_cast<size_t>(rt) * side + rt] = 1;    // Distance 0.
 		if (!tall(rt, rt)) {
-			// The light stands on open floor: flood outward from it.
+			// The light stands on open floor: flood outward from it.  Its own
+			// tile is always lit -- the flame is visible there.
+			lit[static_cast<size_t>(rt) * side + rt]     = 1;    // Distance 0.
 			visited[static_cast<size_t>(rt) * side + rt] = 1;
 			queue.emplace_back(rt, rt);
 		} else {
@@ -1196,8 +1196,15 @@ namespace NaturalLight {
 			// outward from it would spread to BOTH faces of the wall and light
 			// the far side as if the wall were not there.  Instead seed the
 			// fill from the room the torch faces -- the orthogonally adjacent
-			// non-wall tiles that are ROOFED (interior).  The wall tile stays
-			// lit but is never flooded past, so the exterior side stays dark.
+			// non-wall tiles that are ROOFED (interior).  The wall tile itself
+			// follows the wall-RING policy: lit like the ring so the flame's
+			// spot glows from inside, but dark when light_walls is off (viewer
+			// outside) -- its cell straddles both faces of the wall, and at
+			// full brightness it shines through a closed door it shares the
+			// tile with (the torch-in-doorway leak).
+			if (light_walls) {
+				set_dist(static_cast<size_t>(rt) * side + rt, 0);
+			}
 			bool seeded = false;
 			for (const auto& d : step) {
 				const int nx = rt + d[0];
@@ -1214,6 +1221,7 @@ namespace NaturalLight {
 			if (!seeded) {
 				// No roofed interior neighbour (a freestanding or fully exposed
 				// wall): fall back to flooding from the wall tile itself.
+				lit[static_cast<size_t>(rt) * side + rt]     = 1;    // Distance 0.
 				visited[static_cast<size_t>(rt) * side + rt] = 1;
 				queue.emplace_back(rt, rt);
 			}
@@ -1929,7 +1937,18 @@ namespace NaturalLight {
 				cgx                         = std::min(std::max(cgx, 0), side - 1);
 				cgy                         = std::min(std::max(cgy, 0), side - 1);
 				const unsigned char mbase   = grid[static_cast<size_t>(cgy) * side + cgx] & 0x7f;
-				const float         base_px = mbase > 0 ? static_cast<float>((mbase - 1) * c_tilesize) : 0.0f;
+				float               base_px = mbase > 0 ? static_cast<float>((mbase - 1) * c_tilesize) : 0.0f;
+				// The rebase only absorbs the anchor/elevation lattice shift:
+				// the shifted cell sits Chebyshev(cell, centre) tiles from the
+				// light's own tile.  When it is only reachable the long way
+				// round -- a torch AT a wall, the shifted cell lying on the
+				// wall's FAR side, its path the wrap around the whole building
+				// -- rebasing by that path would zero the entire detour and
+				// pool full light outside a closed door.  Cap it.
+				const int cheb = std::max(std::abs(cgx - grid_rt), std::abs(cgy - grid_rt));
+				if (const float cap_px = static_cast<float>(cheb * c_tilesize); base_px > cap_px) {
+					base_px = cap_px;
+				}
 				field_local.assign(static_cast<size_t>(side) * side, 0.0f);
 				for (int gy = 0; gy < side; ++gy) {
 					for (int gx = 0; gx < side; ++gx) {
