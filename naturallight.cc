@@ -1036,10 +1036,11 @@ namespace NaturalLight {
 		std::vector<std::pair<int, int>> queue;
 		size_t                           qhead = 0;
 		// Outside-tile grid coords + the opening's transmission percent + the
-		// opening's TOP z-level (0 for none): a window mounted high enough to
-		// rise above an adjoining floor-roof deck spills OVER the deck surface.
-		std::vector<std::tuple<int, int, int, int>> spill_cand;
-		std::vector<std::pair<int, int>>            door_cand;    // Roofed->open exit tiles.
+		// opening's TOP z-level (0 for none) + the fill's path distance to the
+		// far side: a window mounted high enough to rise above an adjoining
+		// floor-roof deck spills OVER the deck surface.
+		std::vector<std::tuple<int, int, int, int, int>> spill_cand;
+		std::vector<std::pair<int, int>>                 door_cand;    // Roofed->open exit tiles.
 		// The room's floor for the wall test is the STOREY floor (storeys are 5 z
 		// apart), not the light's own z: a lamp standing on a shelf at tz 4 is
 		// still in a ground-floor room whose walls rise from z 0, and the books
@@ -1296,14 +1297,15 @@ namespace NaturalLight {
 							const bool in_grid = ox >= 0 && oy >= 0 && ox < side && oy < side;
 							if (in_grid && !tall(ox, oy)) {
 								bool dup = false;
-								for (const auto& [px, py, ppct, ptop] : spill_cand) {
+								for (const auto& [px, py, ppct, ptop, ppath] : spill_cand) {
 									if (px == ox && py == oy) {
 										dup = true;
 										break;
 									}
 								}
 								if (!dup) {
-									spill_cand.emplace_back(ox, oy, pct, open_top);
+									// +2: through the wall tile onto the far side.
+									spill_cand.emplace_back(ox, oy, pct, open_top, gdist + 2);
 								}
 							}
 						}
@@ -1382,7 +1384,7 @@ namespace NaturalLight {
 		// back INSIDE.  A tile the fill already lit needs no spill glow anyway.
 		if (spills != nullptr) {
 			std::vector<Tile_coord> emitted_all;
-			auto                    emit_spill = [&](const Tile_coord& t, int pct, int floor_storey) {
+			auto                    emit_spill = [&](const Tile_coord& t, int pct, int floor_storey, int path) {
                 const int dedupe_r = std::max(2, floor_storey >= 1 ? 4 : 2);
                 for (const Tile_coord& e : emitted_all) {
                     if (std::abs(t.tx - e.tx) <= dedupe_r && std::abs(t.ty - e.ty) <= dedupe_r && std::abs(t.tz - e.tz) <= 5) {
@@ -1390,13 +1392,18 @@ namespace NaturalLight {
                     }
                 }
                 emitted_all.push_back(t);
-                spills->push_back({t, pct, floor_storey});
+                spills->push_back({t, pct, floor_storey, path});
+			};
+			// Path distance the fill recorded at a grid tile (0 when unreached).
+			auto path_at = [&](int gx, int gy) {
+				const int v = lit[static_cast<size_t>(gy) * side + gx] & 0x7f;
+				return v > 0 ? v - 1 : 0;
 			};
 			// Like doorway/well spills below, nearby wall/window candidates can
 			// represent the same physical opening and would otherwise spawn
 			// overlapping continuation bubbles with near-identical falloff.
 			std::vector<std::pair<int, int>> spill_emitted;
-			for (const auto& [ox, oy, pct, open_top] : spill_cand) {
+			for (const auto& [ox, oy, pct, open_top, cpath] : spill_cand) {
 				const int dedupe_r  = std::max(2, (lt.tz / 5) >= 1 ? 4 : 2);
 				bool      near_prev = false;
 				for (const auto& [ex, ey] : spill_emitted) {
@@ -1443,7 +1450,7 @@ namespace NaturalLight {
 					floor = std::max(floor, deck_top / 5);
 				}
 				spill_emitted.emplace_back(ox, oy);
-				emit_spill(Tile_coord(Light_tile_norm(fx), Light_tile_norm(fy), sp_tz), pct, floor);
+				emit_spill(Tile_coord(Light_tile_norm(fx), Light_tile_norm(fy), sp_tz), pct, floor, cpath);
 			}
 			// Doorway/roof-edge spills.  Neighbouring exit tiles along a wide
 			// opening would each spawn a near-identical continuation bubble
@@ -1470,7 +1477,9 @@ namespace NaturalLight {
 				// upstairs door exits onto a walkway/deck at that level, and a
 				// ground-anchored bubble would flood the wrong (ground) room
 				// and slide its lattice off the deck.
-				emit_spill(Tile_coord(Light_tile_norm(lt.tx + ox - rt), Light_tile_norm(lt.ty + oy - rt), floor_z), 100, lt.tz / 5);
+				emit_spill(
+						Tile_coord(Light_tile_norm(lt.tx + ox - rt), Light_tile_norm(lt.ty + oy - rt), floor_z), 100, lt.tz / 5,
+						path_at(ox, oy));
 			}
 			// Ceiling-well spills (stairwell / ladder openings): the light
 			// climbs through the hole in its own ceiling and pools on the
@@ -1515,7 +1524,9 @@ namespace NaturalLight {
 					continue;
 				}
 				well_emitted.emplace_back(ox, oy);
-				emit_spill(Tile_coord(Light_tile_norm(lt.tx + ox - rt), Light_tile_norm(lt.ty + oy - rt), roof_z), 100, roof_z / 5);
+				emit_spill(
+						Tile_coord(Light_tile_norm(lt.tx + ox - rt), Light_tile_norm(lt.ty + oy - rt), roof_z), 100, roof_z / 5,
+						path_at(ox, oy));
 			}
 			// Floor-well spills: the mirror of the ceiling wells above.  The
 			// bubble sits on the storey BELOW (its z / floor let it light the
@@ -1570,7 +1581,7 @@ namespace NaturalLight {
 					down_emitted.emplace_back(ox, oy);
 					emit_spill(
 							Tile_coord(Light_tile_norm(lt.tx + lx - rt), Light_tile_norm(lt.ty + ly - rt), floor_z - 5), 100,
-							(floor_z - 5) / 5);
+							(floor_z - 5) / 5, path_at(ox, oy));
 				}
 			}
 		}
@@ -1851,7 +1862,8 @@ namespace NaturalLight {
 			unsigned char* cov, unsigned char* dstpix, const unsigned char* srcpix, int W, int H, int dst_lw, int src_lw, int sx,
 			int sy, int radius, int elevation, int dist_bias, int intensity_pct, const unsigned char* roofpix, int roof_lw,
 			bool veto_roof, bool is_spill, int spill_floor, int light_top_storey, int light_floor_storey, int anchor_z,
-			const unsigned char* grid, int grid_rt, int grid_fx, int grid_fy, int clip_x0, int clip_y0, int clip_x1, int clip_y1) {
+			const unsigned char* grid, int grid_rt, int grid_fx, int grid_fy, bool inside_viewer, int clip_x0, int clip_y0,
+			int clip_x1, int clip_y1) {
 		if (radius <= 0 || intensity_pct <= 0) {
 			return;
 		}
@@ -2147,7 +2159,7 @@ namespace NaturalLight {
 						bypass_field = true;
 					}
 				} else {
-					if (roofrow && is_spill && light_top_storey >= 1) {
+					if (roofrow && is_spill && (inside_viewer || light_top_storey >= 1)) {
 						// An ELEVATED spill (a stairwell bubble on an upper
 						// floor; light_top_storey carries its render storey):
 						// clear pixels are ground-level surfaces -- the walls
@@ -2155,6 +2167,14 @@ namespace NaturalLight {
 						// cells hang up-screen.  Lighting them shows as a
 						// bright beam under the storey; everything the bubble
 						// may light up there is marked 128 + storey.
+						// INSIDE viewer: other buildings' ground walls have
+						// CLEAR faces that render up-screen of their feet and
+						// z-blind-sample the spill's lit outdoor cells (glow
+						// on a neighbour facade through nothing).  Escaped
+						// ground light is already the main splat's field
+						// continuing through the opening with true path
+						// falloff -- the spill keeps only its whole-unit
+						// 128 marks (tree canopies) when the viewer is inside.
 						continue;
 					}
 				}

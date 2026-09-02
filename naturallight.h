@@ -88,12 +88,16 @@ namespace NaturalLight {
 
 	// One spill opening found by Build_light_shadow_grid: the tile just outside
 	// the opening the light escapes through, the opening's transmission percent
-	// (1..100; doorways are open air and carry 100), and the storey the source
-	// light stands on (tz / 5).
+	// (1..100; doorways are open air and carry 100), the storey the source
+	// light stands on (tz / 5), and the fill's PATH distance to the opening in
+	// tiles -- the wrap-around fill exits under other buildings' eaves too, and
+	// budgeting those by straight-line distance would hand a spent light a
+	// fresh bubble there.
 	struct Light_spill {
 		Tile_coord tile;
 		int        percent;
 		int        floor;
+		int        path = 0;
 	};
 
 	// Call once per world render, before the chunks are painted: replenishes
@@ -154,8 +158,8 @@ namespace NaturalLight {
 			unsigned char* cov, unsigned char* dstpix, const unsigned char* srcpix, int W, int H, int dst_lw, int src_lw, int sx,
 			int sy, int radius, int elevation, int dist_bias, int intensity_pct, const unsigned char* roofpix, int roof_lw,
 			bool veto_roof, bool is_spill, int spill_floor, int light_top_storey, int light_floor_storey, int anchor_z,
-			const unsigned char* grid, int grid_rt, int grid_fx, int grid_fy, int clip_x0 = 0, int clip_y0 = 0, int clip_x1 = -1,
-			int clip_y1 = -1);
+			const unsigned char* grid, int grid_rt, int grid_fx, int grid_fy, bool inside_viewer = false, int clip_x0 = 0,
+			int clip_y0 = 0, int clip_x1 = -1, int clip_y1 = -1);
 
 }    // namespace NaturalLight
 
