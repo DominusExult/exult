@@ -1585,6 +1585,47 @@ namespace NaturalLight {
 				}
 			}
 		}
+		// Straight-ray shadowing, RING CELLS ONLY (after emission -- the spill
+		// budgets above read the path distances this pass clears).  A spill
+		// grid's facade ring otherwise wraps around the building corner (the
+		// flood reaches the far wall from the outside) and the 132 face gate
+		// would light the perpendicular wall's face off it.  Open ground
+		// cells are NOT filtered: shadowing them reshaped the outdoor pools
+		// into hard-edged cones (rejected look) -- the pools keep the flood's
+		// radial falloff.
+		{
+			const bool spill_grid = spills == nullptr;
+			auto       los_clear  = [&](int gx, int gy) {
+                const float dx    = static_cast<float>(gx - rt);
+                const float dy    = static_cast<float>(gy - rt);
+                const int   steps = static_cast<int>(std::max(std::abs(dx), std::abs(dy))) * 4;
+                for (int i = 1; i < steps; ++i) {
+                    const float ft = static_cast<float>(i) / static_cast<float>(steps);
+                    const int   cx = rt + static_cast<int>(std::lround(dx * ft));
+                    const int   cy = rt + static_cast<int>(std::lround(dy * ft));
+                    if ((cx == gx && cy == gy) || (cx == rt && cy == rt)) {
+                        continue;    // Start / target cells never block themselves.
+                    }
+                    if (tall(cx, cy)) {
+                        return false;
+                    }
+                }
+                return true;
+			};
+			if (spill_grid) {
+				for (int gy = 0; gy < side; ++gy) {
+					for (int gx = 0; gx < side; ++gx) {
+						const size_t idx = static_cast<size_t>(gy) * side + gx;
+						if (lit[idx] == 0 || (gx == rt && gy == rt) || !tall(gx, gy)) {
+							continue;
+						}
+						if (!los_clear(gx, gy)) {
+							lit[idx] = 0;
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Cross-frame cache for room-fill floods.  A flood depends only on its
@@ -2135,7 +2176,39 @@ namespace NaturalLight {
 						if (roofrow[x] == 255) {
 							continue;    // A spill never lights a real roof.
 						}
-						if (roofrow[x] - 128 > spill_floor) {
+						if (roofrow[x] == 132) {
+							// Exterior wall FACE: its pixels overlap the lattice
+							// cells BEHIND it up-screen, so the plain field sample
+							// borrows the window fan's ground light for a wall
+							// facing the other way.  Walk toward the foot (4px
+							// per z, down-right) to the wall's own RING cell
+							// (0x80-flagged in spill grids) and light the face
+							// only where that ring carries light: the facade
+							// near the opening glows, the far side of the
+							// corner does not.
+							if (grid == nullptr) {
+								continue;
+							}
+							bool ring_lit = false;
+							for (int stp = 0; stp <= 7; ++stp) {
+								const float pu = (static_cast<float>(x + stp * 4) - grid_u) * inv_cell;
+								const float pv = (static_cast<float>(y + stp * 4) - grid_v) * inv_cell;
+								const int   cu = static_cast<int>(std::lround(pu));
+								const int   cv = static_cast<int>(std::lround(pv));
+								if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
+									break;
+								}
+								const unsigned char m = grid[static_cast<size_t>(cv) * side + cu];
+								if (m & 0x80) {
+									ring_lit = (m & 0x7f) != 0;
+									break;
+								}
+							}
+							if (!ring_lit) {
+								continue;
+							}
+							// Falls through to the normal field sample below.
+						} else if (roofrow[x] - 128 > spill_floor) {
 							// The marked surface sits on a HIGHER storey than
 							// the spill's source: a ground-floor window's glow
 							// must not brighten a floor-roof deck above it.

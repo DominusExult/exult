@@ -1426,6 +1426,18 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 		}
 		return x;
 	}();
+	// Exterior ground-wall FACE (viewer outside, wall under its roof): its
+	// sprite renders up-screen of its foot, so as a CLEAR pixel it z-blind
+	// samples the outdoor cells hanging over it (a window's fan lit the
+	// perpendicular wall around the corner).  Splat_radial_light resolves
+	// 132 by the wall's own foot-ward cell instead.
+	static const Xform_palette roof_face = [] {
+		Xform_palette x;
+		for (int i = 0; i < 256; ++i) {
+			x.colors[i] = 132;
+		}
+		return x;
+	}();
 	// An object standing ON a roof must stay as dark as the roof under it.
 	// "Roof level" is the render-skip lift while inside (NOT a hardcoded z 5:
 	// a tall room's visible upper wall segments are walls, not roofs) and the
@@ -1565,10 +1577,17 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 			// A grounded shape tall enough to reach roof level (tree,
 			// lamppost): under open sky mark it as a whole unit so masked
 			// lights don't cut the canopy into lit and dark patches; under
-			// cover leave the mask as the shapes beneath painted it.
+			// cover it is a wall in the building's shell -- mark its face
+			// (132), except window panes and door leaves, which keep
+			// glowing with the light behind them.
 			if (open_sky_above(top)) {
 				tall_exterior = true;
 			} else {
+				const Shape_info& winfo = obj->get_info();
+				if (winfo.is_door() || winfo.has_light_passes_info()) {
+					return;
+				}
+				frame->paint_rle_transformed(roof_light_mask.get(), sx, sy, roof_face);
 				return;
 			}
 		}
