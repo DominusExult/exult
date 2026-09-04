@@ -494,6 +494,8 @@ namespace NaturalLight {
 		Verdict_cache<Field_key, Field_template> field_cache{1000, true, {}};
 	}    // namespace
 
+	// Find the first shape in `chunk` that light passes through (window, open
+	// door, grate); reports the opening's shape/frame/tile/lift.
 	bool Chunk_find_light_passes_through(
 			Map_chunk* chunk, int& pass_shape, int& pass_frame, int& pass_match_frame, int& pass_tx, int& pass_ty, int& pass_lift) {
 		pass_shape       = -1;
@@ -830,6 +832,9 @@ namespace NaturalLight {
 		return covered;
 	}
 
+	// Decide whether the light living in `olist` (the chunk being painted)
+	// reaches the viewer, composing the enclosure/opening tests above.  The
+	// flags are per-frame / per-chunk facts the caller already computed.
 	LightVisibility Evaluate_light_visibility(
 			Game_object* light_obj, Map_chunk* olist, Game_object* main_actor, bool viewer_outside, bool same_chunk,
 			bool avatar_sealed, bool chunk_has_opening) {
@@ -932,6 +937,10 @@ namespace NaturalLight {
 		return brightness <= 2 ? 0 : (brightness <= 4 ? 1 : 2);
 	}
 
+	// The z-level of the roof over the given absolute tile -- the lowest solid
+	// cover above the light -- or floor + 5, the classic wall-top threshold,
+	// when none is found.  `found` reports whether an actual ceiling shape was
+	// seen (a dungeon's rock ceiling is a plain solid, not a roof shape).
 	int Light_room_roof_z(Game_map* gmap, int tx, int ty, int lift, bool* found) {
 		if (found != nullptr) {
 			*found = false;
@@ -1009,6 +1018,57 @@ namespace NaturalLight {
 		return floor_z + 5;
 	}
 
+	// Strict per-frame light-passes match; 0% entries block.
+	bool Object_passes_light(Game_object* obj) {
+		if (obj == nullptr) {
+			return false;
+		}
+		const Shape_info& info = obj->get_info();
+		if (!info.has_light_passes_info()) {
+			return false;
+		}
+		int  match_frame;
+		bool has_explicit;
+		bool has_wildcard;
+		int  percent;
+		return Shape_light_passes_through_strict(info, obj->get_framenum(), match_frame, has_explicit, has_wildcard, percent);
+	}
+
+	// A wall-shell member is solid, immovable, non-light-passing (strict
+	// per-frame), not an open door leaf, and rises to its tile's FOUND roof.
+	// A lamppost (no roof overhead) or a trough under a tree canopy (does not
+	// rise to it) is an OBJECT instead.
+	bool Object_is_wall_face(Game_object* obj) {
+		if (obj == nullptr || obj->as_actor() != nullptr || obj->is_dragable()) {
+			return false;
+		}
+		const Shape_info& info = obj->get_info();
+		if (!info.is_solid() || info.is_floor() || info.is_roof()) {
+			return false;
+		}
+		if (info.is_door() && !obj->is_closed_door()) {
+			return false;    // An open leaf stands free of the wall line.
+		}
+		if (info.has_light_passes_info()) {
+			int  match_frame;
+			bool has_explicit;
+			bool has_wildcard;
+			int  percent;
+			if (Shape_light_passes_through_strict(info, obj->get_framenum(), match_frame, has_explicit, has_wildcard, percent)) {
+				return false;    // Pane / grate: glows with the light behind it.
+			}
+		}
+		Game_window* const gwin = Game_window::get_instance();
+		Game_map* const    gmap = gwin ? gwin->get_map() : nullptr;
+		if (gmap == nullptr) {
+			return false;
+		}
+		const Tile_coord t      = obj->get_tile();
+		bool             found  = false;
+		const int        roof_z = Light_room_roof_z(gmap, t.tx, t.ty, t.tz, &found);
+		return found && t.tz + info.get_3d_height() >= roof_z;
+	}
+
 	// Shared room flood for the light masks: fill from `start` across passable
 	// (non tall-wall) floor, bounded by the (2*rt+1) grid.  Walls reaching the
 	// room's roof level `roof_z` stop the fill and are lit as a one-tile ring,
@@ -1026,9 +1086,17 @@ namespace NaturalLight {
 	// start tile lies, so a carried torch keeps a stable mask.
 	static void Flood_room_grid(
 			Game_map* gmap, const Tile_coord& lt, int rt, int roof_z, std::vector<unsigned char>& lit,
-			std::vector<Light_spill>* spills, bool light_walls = true) {
+			std::vector<Light_spill>* spills, bool light_walls = true, std::vector<unsigned char>* ring = nullptr) {
 		const int                  side = 2 * rt + 1;
 		std::vector<unsigned char> visited(static_cast<size_t>(side) * side, 0);
+		// Per-wall-cell FACE arrival distances (4 bytes per cell: [S, E, N, W],
+		// path distance + 1, 0 = never arrived; byte 0's high bit marks the
+		// cell as a wall).  A wall sprite is the same art from either side, so
+		// the consumer picks the arrival matching the VIEWER's side; diagonal
+		// touches are corner posts and never certify a face.
+		if (ring != nullptr) {
+			ring->assign(static_cast<size_t>(side) * side * 4, 0);
+		}
 		// Breadth-first queue: the fill records each tile's PATH distance from
 		// the start (in tiles, stored as distance+1 in `lit`; 0 = unreached),
 		// so the splat can fade the light by the distance it actually
@@ -1174,6 +1242,20 @@ namespace NaturalLight {
 				lit[idx] = static_cast<unsigned char>(v);
 			}
 		};
+		// Same, for one FACE slot of a wall cell in the ring channel.  Byte 0's
+		// high bit is the WALL-CELL MARKER (set on any approach); face
+		// distances live in the low 7 bits.
+		auto set_ring = [&](size_t cell, int face, int dist) {
+			if (ring == nullptr) {
+				return;
+			}
+			const int      v   = (dist < 126 ? dist : 126) + 1;
+			unsigned char& r   = (*ring)[cell * 4 + face];
+			const int      cur = r & 0x7f;
+			if (cur == 0 || cur > v) {
+				r = static_cast<unsigned char>((r & 0x80) | v);
+			}
+		};
 		static const int step[4][2] = {
 				{ 1,  0},
                 {-1,  0},
@@ -1282,6 +1364,21 @@ namespace NaturalLight {
 							// the splat's face re-probe only lands on wall cells.
 							lit[nidx] |= 0x80;
 						}
+					}
+					// FACE arrival channel, independent of light_walls: record
+					// which side the fill reached this wall from (stepping
+					// north hits its S side, etc.).
+					if (ring != nullptr) {
+						(*ring)[nidx * 4] |= 0x80;    // Wall-cell marker.
+					}
+					if (d[1] < 0) {
+						set_ring(nidx, 0, gdist + 1);
+					} else if (d[1] > 0) {
+						set_ring(nidx, 2, gdist + 1);
+					} else if (d[0] < 0) {
+						set_ring(nidx, 1, gdist + 1);
+					} else if (d[0] > 0) {
+						set_ring(nidx, 3, gdist + 1);
 					}
 					if (spills != nullptr) {
 						int       open_top = 0;
@@ -1646,6 +1743,7 @@ namespace NaturalLight {
 	namespace {
 		struct Flood_cache_entry {
 			std::vector<unsigned char> lit;
+			std::vector<unsigned char> ring;
 			std::vector<Light_spill>   spills;
 			Uint64                     stamp = 0;    // When the flood was computed.
 			Uint64                     used  = 0;    // When it was last requested.
@@ -1724,10 +1822,13 @@ namespace NaturalLight {
 		}
 	}    // namespace
 
+	// Replenish the flood cache's per-frame refresh budget (see the cache above).
 	void Flood_cache_frame_begin() {
 		flood_spend = 0;
 	}
 
+	// Mixed into the light-layer signatures so cached coverage rebuilds exactly
+	// when flood content changes (a door opened or closed).
 	uint64_t Flood_content_generation() {
 		return flood_content_gen;
 	}
@@ -1780,6 +1881,8 @@ namespace NaturalLight {
 		++flood_content_gen;
 	}
 
+	// A world object was edited (frame change, shape swap, placed, removed):
+	// invalidate the light caches around it when it can shape light floods.
 	void Notify_object_edited(Game_object* obj) {
 		Game_window* const gwin = Game_window::get_instance();
 		if (obj == nullptr || gwin == nullptr || !gwin->get_natural_light() || obj->as_actor() != nullptr) {
@@ -1815,7 +1918,8 @@ namespace NaturalLight {
 	// coords) plus the opening's transmission percent (doorway / roof-edge
 	// exits are open air and carry 100).
 	void Build_light_shadow_grid(
-			Game_object* light_obj, int rt, std::vector<unsigned char>& lit, std::vector<Light_spill>& spills, bool light_walls) {
+			Game_object* light_obj, int rt, std::vector<unsigned char>& lit, std::vector<Light_spill>& spills, bool light_walls,
+			std::vector<unsigned char>* ring) {
 		const int side = 2 * rt + 1;
 		lit.assign(static_cast<size_t>(side) * side, 0);    // Default: unlit; the room fills in.
 		spills.clear();
@@ -1835,14 +1939,18 @@ namespace NaturalLight {
 		if (Flood_cache_entry* hit = Flood_cache_find(key, now)) {
 			lit    = hit->lit;
 			spills = hit->spills;
+			if (ring != nullptr) {
+				*ring = hit->ring;
+			}
 			return;
 		}
-		const Flood_spend_scope spend;
-		const int               roof_z = Light_room_roof_z(gmap, lt.tx, lt.ty, lt.tz);
-		Flood_room_grid(gmap, lt, rt, roof_z, lit, &spills, light_walls);
+		const Flood_spend_scope    spend;
+		const int                  roof_z = Light_room_roof_z(gmap, lt.tx, lt.ty, lt.tz);
+		std::vector<unsigned char> ringv;
+		Flood_room_grid(gmap, lt, rt, roof_z, lit, &spills, light_walls, &ringv);
 		Flood_cache_entry& entry = flood_cache[key];
 		const bool         had   = entry.stamp != 0;
-		if (had && entry.lit == lit && Spills_equal(entry.spills, spills)) {
+		if (had && entry.lit == lit && entry.ring == ringv && Spills_equal(entry.spills, spills)) {
 			entry.ttl = std::min<Uint64>(entry.ttl * 2, flood_cache_ttl_max);
 		} else {
 			entry.ttl = flood_cache_ttl;
@@ -1850,13 +1958,22 @@ namespace NaturalLight {
 				++flood_content_gen;
 			}
 			entry.lit    = lit;
+			entry.ring   = ringv;
 			entry.spills = spills;
+		}
+		if (ring != nullptr) {
+			*ring = std::move(ringv);
 		}
 		entry.stamp = now;
 		entry.used  = now;
 	}
 
-	void Build_spill_shadow_grid(const Tile_coord& start, int rt, std::vector<unsigned char>& lit, bool light_walls) {
+	// Room-fill grid for a spill glow, flooded from `start` -- the tile just
+	// outside the opening the light escapes through.  `light_walls` lights the
+	// facade ring the glow falls on (viewer-outside look; from inside the ring
+	// shows through the walls' interior faces).
+	void Build_spill_shadow_grid(
+			const Tile_coord& start, int rt, std::vector<unsigned char>& lit, bool light_walls, std::vector<unsigned char>* ring) {
 		const int side = 2 * rt + 1;
 		lit.assign(static_cast<size_t>(side) * side, 0);
 		if (rt <= 0) {
@@ -1878,33 +1995,56 @@ namespace NaturalLight {
 		const Flood_cache_key key{start.tx, start.ty, start.tz, rt, light_walls ? 0 : 3};
 		if (Flood_cache_entry* hit = Flood_cache_find(key, now)) {
 			lit = hit->lit;
+			if (ring != nullptr) {
+				*ring = hit->ring;
+			}
 			return;
 		}
-		const Flood_spend_scope spend;
-		const int               roof_z = Light_room_roof_z(gmap, start.tx, start.ty, start.tz);
-		Flood_room_grid(gmap, start, rt, roof_z, lit, nullptr, light_walls);
+		const Flood_spend_scope    spend;
+		const int                  roof_z = Light_room_roof_z(gmap, start.tx, start.ty, start.tz);
+		std::vector<unsigned char> ringv;
+		Flood_room_grid(gmap, start, rt, roof_z, lit, nullptr, light_walls, &ringv);
 		Flood_cache_entry& entry = flood_cache[key];
 		const bool         had   = entry.stamp != 0;
-		if (had && entry.lit == lit) {
+		if (had && entry.lit == lit && entry.ring == ringv) {
 			entry.ttl = std::min<Uint64>(entry.ttl * 2, flood_cache_ttl_max);
 		} else {
 			entry.ttl = flood_cache_ttl;
 			if (had) {
 				++flood_content_gen;
 			}
-			entry.lit = lit;
+			entry.lit  = lit;
+			entry.ring = ringv;
+		}
+		if (ring != nullptr) {
+			*ring = std::move(ringv);
 		}
 		entry.spills.clear();
 		entry.stamp = now;
 		entry.used  = now;
 	}
 
+	// Splat one radial light: a soft dome falloff written into `cov` (W*H,
+	// stride W), copying the brightened source pixel wherever this light is the
+	// strongest contributor so far.  `elevation` (game px) rounds the dome;
+	// `dist_bias` continues another source's falloff (spill glows);
+	// `intensity_pct` (1..100) scales the whole dome.  `roofpix` marks roofs
+	// (255), tall / upper-storey surfaces (128 + storey) and exterior wall
+	// faces (132): `veto_roof` keeps marked pixels dark under an interior
+	// light, `is_spill` gates by `spill_floor` / `light_top_storey`.  A non-null
+	// `grid` renders the light as a propagated field pinned to the tile lattice
+	// at (`grid_fx`,`grid_fy`) instead of a free dome.  `kindpix`/`footdx`/
+	// `footdy` are the surface-identity channels and `ring` the per-wall-cell
+	// face arrivals; (`av_fx`,`av_fy`) is the viewer's z=0 foot for the
+	// viewer-side face rule.  A clip window (clip_x1/y1 >= 0) restricts the
+	// pixels written (scroll-vacated strip patching).
 	void Splat_radial_light(
 			unsigned char* cov, unsigned char* dstpix, const unsigned char* srcpix, int W, int H, int dst_lw, int src_lw, int sx,
 			int sy, int radius, int elevation, int dist_bias, int intensity_pct, const unsigned char* roofpix, int roof_lw,
 			bool veto_roof, bool is_spill, int spill_floor, int light_top_storey, int light_floor_storey, int anchor_z,
 			const unsigned char* grid, int grid_rt, int grid_fx, int grid_fy, bool inside_viewer, int clip_x0, int clip_y0,
-			int clip_x1, int clip_y1) {
+			int clip_x1, int clip_y1, const unsigned char* kindpix, int kind_lw, const unsigned char* footdx,
+			const unsigned char* footdy, int foot_lw, const unsigned char* ring, int av_fx, int av_fy) {
 		if (radius <= 0 || intensity_pct <= 0) {
 			return;
 		}
@@ -1946,14 +2086,88 @@ namespace NaturalLight {
 		// boundary along the walls -- stays fixed as the source moves within
 		// its tile.  A tile covers c_tilesize pixels up-and-left of its foot;
 		// its centre is half a tile up-left of it.
-		const int             side     = grid != nullptr ? 2 * grid_rt + 1 : 0;
-		const float           cell     = static_cast<float>(c_tilesize);
-		const float           inv_cell = 1.0f / cell;
-		const float           half     = 0.5f * (cell - 1.0f);
-		const float           grid_u   = static_cast<float>(grid_fx) - half - static_cast<float>(grid_rt) * cell;
-		const float           grid_v   = static_cast<float>(grid_fy) - half - static_cast<float>(grid_rt) * cell;
+		const int   side     = grid != nullptr ? 2 * grid_rt + 1 : 0;
+		const float cell     = static_cast<float>(c_tilesize);
+		const float inv_cell = 1.0f / cell;
+		const float half     = 0.5f * (cell - 1.0f);
+		const float grid_u   = static_cast<float>(grid_fx) - half - static_cast<float>(grid_rt) * cell;
+		const float grid_v   = static_cast<float>(grid_fy) - half - static_cast<float>(grid_rt) * cell;
+		// Splat centre in lattice coordinates + the path rebase (shared by the
+		// field template build and the face consumer below).  The wall-top
+		// anchor pins the lattice up-and-left of the tiles' floor positions
+		// (4px per z of wall height), so the grid CENTRE renders up-left of the
+		// light itself.  The brightness peak, however, belongs at the light's
+		// true screen position: measure the per-tile straight-line distance
+		// from the SPLAT CENTRE expressed in lattice coordinates, not from the
+		// grid centre -- otherwise the whole pool sits diagonally up-left of
+		// the source by the anchor shift.  The flood path is 0 at the light's
+		// TILE (the grid centre), which again renders up-left of the true
+		// centre: rebase the path so it is zero at the cell under the splat
+		// centre, capped at that cell's Chebyshev lattice distance (when it is
+		// only reachable the long way round -- a torch AT a wall -- rebasing by
+		// the wrap path would pool full light outside a closed door).
+		float uc      = 0.0f;
+		float vc      = 0.0f;
+		float base_px = 0.0f;
+		if (grid != nullptr) {
+			uc                        = (static_cast<float>(sx) - grid_u) / cell;
+			vc                        = (static_cast<float>(sy) - grid_v) / cell;
+			int cgx                   = static_cast<int>(std::lround(uc));
+			int cgy                   = static_cast<int>(std::lround(vc));
+			cgx                       = std::min(std::max(cgx, 0), side - 1);
+			cgy                       = std::min(std::max(cgy, 0), side - 1);
+			const unsigned char mbase = grid[static_cast<size_t>(cgy) * side + cgx] & 0x7f;
+			base_px                   = mbase > 0 ? static_cast<float>((mbase - 1) * c_tilesize) : 0.0f;
+			const int cheb            = std::max(std::abs(cgx - grid_rt), std::abs(cgy - grid_rt));
+			if (const float cap_px = static_cast<float>(cheb * c_tilesize); base_px > cap_px) {
+				base_px = cap_px;
+			}
+		}
 		std::vector<float>    field_local;
 		const Field_template* ftmpl = nullptr;
+		// VETO (interior) lights keep
+		// the classic field/ring rendering wholesale -- always correct there;
+		// the consumers exist for exterior lights and spills.
+		const bool face_data = kindpix != nullptr && footdx != nullptr && footdy != nullptr && foot_lw > 0;
+		const bool face_grid = face_data && grid != nullptr && ring != nullptr && !veto_roof;
+		// The lattice is anchored at the wall-top level (grid_fx/fy = the
+		// light tile's foot at anchor_z, 4px per z up-left of ground) while
+		// stamped feet are at z=0: shift feet by the same amount or a veto
+		// light's lookups land cells down-right of the wall's ring cell.
+		const int foot_shift = 4 * (anchor_z > 0 ? anchor_z : 0);
+		// The viewer's lattice cell: a wall sprite is the same art from either
+		// side, so a face is lit by the arrival on the side the VIEWER is on
+		// (barn: viewer east of the west wall, lamp west -> dark; a window
+		// spill with the viewer west of the wall -> its west side glows).
+		int av_cu = grid_rt;
+		int av_cv = grid_rt;
+		if (face_grid) {
+			av_cu = static_cast<int>(std::lround((static_cast<float>(av_fx - foot_shift) - grid_u) * inv_cell));
+			av_cv = static_cast<int>(std::lround((static_cast<float>(av_fy - foot_shift) - grid_v) * inv_cell));
+		}
+		// Face arrival for a wall cell (dist+1, 0 = unlit).  The drawn S/E
+		// faces ALWAYS count (they are the visible art from every side --
+		// a facade stays lit seen from inside through the cutaway); an N/W
+		// arrival counts only when the viewer stands on that side of the
+		// wall (a window spill west of a wall, viewer west).
+		auto ring_face_dist = [&](int cu, int cv) -> int {
+			const unsigned char* rc  = ring + (static_cast<size_t>(cv) * side + cu) * 4;
+			int                  d   = 0;
+			auto                 acc = [&d](int v) {
+                if (v != 0 && (d == 0 || v < d)) {
+                    d = v;
+                }
+			};
+			acc(rc[0] & 0x7f);    // S
+			acc(rc[1] & 0x7f);    // E
+			if (av_cv < cv) {
+				acc(rc[2] & 0x7f);    // N, viewer north.
+			}
+			if (av_cu < cu) {
+				acc(rc[3] & 0x7f);    // W, viewer west.
+			}
+			return d;
+		};
 		if (grid != nullptr) {
 			// Reuse a recently computed field: FNV-1a over the grid content
 			// (the flood cache above already hands back the identical grid for
@@ -1963,49 +2177,31 @@ namespace NaturalLight {
 			for (size_t i = 0; i < cells; ++i) {
 				ghash = (ghash ^ grid[i]) * 1099511628211ULL;
 			}
+			if (face_grid) {
+				// Wall cells render differently with rings: never share a
+				// cached template between the two variants or across viewer
+				// cells (side selection depends on the avatar's position).
+				for (size_t i = 0; i < cells * 4; ++i) {
+					ghash = (ghash ^ ring[i]) * 1099511628211ULL;
+				}
+				ghash = (ghash ^ static_cast<uint64_t>(av_cu * 131 + av_cv + 65536)) * 1099511628211ULL;
+			}
 			const Field_key fkey{ghash, radius, elevation, dist_bias, intensity_pct, grid_rt, sx - grid_fx, sy - grid_fy};
 			const Uint64    fnow = SDL_GetTicks();
 			ftmpl                = field_cache.find(fkey, fnow);
 			if (ftmpl == nullptr) {
-				// The wall-top anchor pins the lattice up-and-left of the tiles'
-				// floor positions (4px per z of wall height), so the grid CENTRE
-				// renders up-left of the light itself.  The brightness peak,
-				// however, belongs at the light's true screen position: measure
-				// the per-tile straight-line distance from the SPLAT CENTRE
-				// expressed in lattice coordinates, not from the grid centre --
-				// otherwise the whole pool sits diagonally up-left of the source
-				// by the anchor shift (more for taller walls, none for ungated
-				// lights: the old "light centre shifted up-left" bug).  The peak
-				// thus follows the light continuously (as the free dome always
-				// did) while the reached set stays tile-quantized.
-				const float uc = (static_cast<float>(sx) - grid_u) / cell;
-				const float vc = (static_cast<float>(sy) - grid_v) / cell;
-				// The flood path is 0 at the light's TILE (the grid centre), which
-				// again renders up-left of the true centre: the lattice cell under
-				// the splat centre already carries a path of a tile or two, and
-				// max(euclid, path) would dim the pool right at the source.
-				// Rebase the path so it is zero at that cell.
-				int cgx                     = static_cast<int>(std::lround(uc));
-				int cgy                     = static_cast<int>(std::lround(vc));
-				cgx                         = std::min(std::max(cgx, 0), side - 1);
-				cgy                         = std::min(std::max(cgy, 0), side - 1);
-				const unsigned char mbase   = grid[static_cast<size_t>(cgy) * side + cgx] & 0x7f;
-				float               base_px = mbase > 0 ? static_cast<float>((mbase - 1) * c_tilesize) : 0.0f;
-				// The rebase only absorbs the anchor/elevation lattice shift:
-				// the shifted cell sits Chebyshev(cell, centre) tiles from the
-				// light's own tile.  When it is only reachable the long way
-				// round -- a torch AT a wall, the shifted cell lying on the
-				// wall's FAR side, its path the wrap around the whole building
-				// -- rebasing by that path would zero the entire detour and
-				// pool full light outside a closed door.  Cap it.
-				const int cheb = std::max(std::abs(cgx - grid_rt), std::abs(cgy - grid_rt));
-				if (const float cap_px = static_cast<float>(cheb * c_tilesize); base_px > cap_px) {
-					base_px = cap_px;
-				}
 				field_local.assign(static_cast<size_t>(side) * side, 0.0f);
 				for (int gy = 0; gy < side; ++gy) {
 					for (int gx = 0; gx < side; ++gx) {
-						const unsigned char m = grid[static_cast<size_t>(gy) * side + gx] & 0x7f;
+						const size_t  gidx = static_cast<size_t>(gy) * side + gx;
+						unsigned char m    = grid[gidx] & 0x7f;
+						if (face_grid && (ring[gidx * 4] & 0x80) != 0) {
+							// A wall cell's screen area shows its viewer-side
+							// face: use that arrival, not the any-direction ring
+							// -- no bilinear sliver past a dark wall's base, while
+							// ground before a lit facade keeps its light.
+							m = static_cast<unsigned char>(ring_face_dist(gx, gy));
+						}
 						if (!m) {
 							continue;    // Light never reaches this tile.
 						}
@@ -2082,7 +2278,6 @@ namespace NaturalLight {
 		// to restore the pre-floor-roofs clear-ground rendering (the band's
 		// hard edges read as artifacts on the storey below).
 		(void)light_floor_storey;
-		(void)anchor_z;
 		// ELEVATED spills only (walkway/deck bubbles): the source sits `bias`
 		// px behind the opening, so their wall glow falls off Euclidean
 		// (sqrt(d^2 + bias^2)) with the lateral reach capped at 1.5x radius
@@ -2133,10 +2328,113 @@ namespace NaturalLight {
 		const float amp     = 255.0f * inten;
 		const float rr      = static_cast<float>(reach) * static_cast<float>(reach);
 		const float dome_dn = rr + bias * bias + e2;
+		// Map a pixel's stamped foot to its owner cell; -1 = out of grid.
+		auto foot_cell = [&](int px, int py) -> int {
+			const size_t fi = static_cast<size_t>(py) * foot_lw + px;
+			const int    fx = px + static_cast<int>(footdx[fi]) - 128 - foot_shift;
+			const int    fy = py + static_cast<int>(footdy[fi]) - 128 - foot_shift;
+			const int    cu = static_cast<int>(std::lround((static_cast<float>(fx) - grid_u) * inv_cell));
+			const int    cv = static_cast<int>(std::lround((static_cast<float>(fy) - grid_v) * inv_cell));
+			if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
+				return -1;
+			}
+			return cv * side + cu;
+		};
+		// The field's own dome at a cell, for an arrival distance+1 value.
+		auto cell_dome = [&](int cidx, int dist_plus1) -> int {
+			if (dist_plus1 <= 0) {
+				return 0;
+			}
+			float path_px = static_cast<float>((dist_plus1 - 1) * c_tilesize) - base_px;
+			if (path_px < 0.0f) {
+				path_px = 0.0f;
+			}
+			const float ddx    = (static_cast<float>(cidx % side) - uc) * cell;
+			const float ddy    = (static_cast<float>(cidx / side) - vc) * cell;
+			float       travel = std::sqrt(ddx * ddx + ddy * ddy);
+			if (path_px > travel) {
+				travel = path_px;
+			}
+			const float tot  = travel + bias;
+			const float dome = 1.0f - (tot * tot + e2) / rf2;
+			return dome > 0.0f ? static_cast<int>(amp * dome + 0.5f) : 0;
+		};
+		// WALL_FACE consumer: brightness = the fill's arrival at the
+		// OWNER tile's viewer-side face, never the cells the sprite overlaps
+		// up-screen.  Uncertified side = dark; no grid = free dome.
+		auto face_alpha = [&](int px, int py) -> int {
+			const size_t fi = static_cast<size_t>(py) * foot_lw + px;
+			const int    fx = px + static_cast<int>(footdx[fi]) - 128 - foot_shift;
+			const int    fy = py + static_cast<int>(footdy[fi]) - 128 - foot_shift;
+			const int    cu = static_cast<int>(std::lround((static_cast<float>(fx) - grid_u) * inv_cell));
+			const int    cv = static_cast<int>(std::lround((static_cast<float>(fy) - grid_v) * inv_cell));
+			if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
+				return 0;
+			}
+			// Blend the per-tile value with the neighbouring wall cells by the
+			// pixel's sub-tile offset from its snapped foot (the smooth
+			// gradient the bilinear field shows from inside); non-wall
+			// neighbours reuse the base so the face only blends along itself.
+			const int base   = cell_dome(cv * side + cu, ring_face_dist(cu, cv));
+			auto      cell_a = [&](int u_, int v_) -> int {
+                if (u_ < 0 || v_ < 0 || u_ >= side || v_ >= side || (ring[(static_cast<size_t>(v_) * side + u_) * 4] & 0x80) == 0) {
+                    return base;
+                }
+                return cell_dome(v_ * side + u_, ring_face_dist(u_, v_));
+			};
+			float ox       = static_cast<float>(px - fx) * inv_cell;
+			float oy       = static_cast<float>(py - fy) * inv_cell;
+			ox             = ox < -0.5f ? -0.5f : (ox > 0.5f ? 0.5f : ox);
+			oy             = oy < -0.5f ? -0.5f : (oy > 0.5f ? 0.5f : oy);
+			const int   nu = ox >= 0.0f ? cu + 1 : cu - 1;
+			const int   nv = oy >= 0.0f ? cv + 1 : cv - 1;
+			const float wx = ox >= 0.0f ? ox : -ox;
+			const float wy = oy >= 0.0f ? oy : -oy;
+			const float av = static_cast<float>(base) * (1.0f - wx - wy) + static_cast<float>(cell_a(nu, cv)) * wx
+							 + static_cast<float>(cell_a(cu, nv)) * wy;
+			return static_cast<int>(av + 0.5f);
+		};
+		// The field at the object's OWN foot cell --
+		// dark in a room shadow even where the sprite overlaps lit exterior;
+		// its own cell carries the wall-ring arrival, so a tree or post in the
+		// pool is lit from any side.  `max_walk` > 0 (whole-unit thick solids:
+		// ramparts, crenelations) steps an UNREACHED foot cell toward the splat
+		// centre to the footprint's lit near edge -- the fill can never enter a
+		// wide solid's interior columns.
+		auto object_alpha = [&](int px, int py, int max_walk) -> int {
+			const int cidx = foot_cell(px, py);
+			if (cidx < 0) {
+				return 0;
+			}
+			int       cu = cidx % side;
+			int       cv = cidx / side;
+			int       d  = grid[static_cast<size_t>(cidx)] & 0x7f;
+			const int tu = static_cast<int>(std::lround(uc));
+			const int tv = static_cast<int>(std::lround(vc));
+			for (int step = 0; d == 0 && step < max_walk; ++step) {
+				const int su = tu > cu ? 1 : (tu < cu ? -1 : 0);
+				const int sv = tv > cv ? 1 : (tv < cv ? -1 : 0);
+				if (su == 0 && sv == 0) {
+					break;
+				}
+				cu += su;
+				cv += sv;
+				if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
+					return 0;
+				}
+				d = grid[static_cast<size_t>(cv) * side + cu] & 0x7f;
+			}
+			return cell_dome(cv * side + cu, d);
+		};
+		// ACTOR pixels (kind 3) sample like ground here -- silhouette-shaped
+		// deviations would ghost in the cached static coverage; their cap at
+		// the light level of their own feet is applied per frame on the
+		// composite (build_light_layers).
 		for (int y = y0; y <= y1; ++y) {
 			const int            dy      = y - sy;
 			const float          dy2     = static_cast<float>(dy) * static_cast<float>(dy);
 			const unsigned char* roofrow = roofpix ? roofpix + y * roof_lw : nullptr;
+			const unsigned char* kindrow = face_data ? kindpix + static_cast<size_t>(y) * kind_lw : nullptr;
 			// Template row for this scanline, pre-offset so trow[x] is the
 			// field alpha at screen x.  The euclid-spill bbox can extend past
 			// the template (reach > radius), so rows outside it stay null.
@@ -2153,7 +2451,42 @@ namespace NaturalLight {
 				// kind (veto / spill / exterior) what stays dark, what is lit
 				// as a whole unit (bypass_field) and what keeps sampling the
 				// propagated field.
+				// A wall-face or object pixel resolves by its OWNER's surface
+				// (ring arrivals / foot cell) instead of the mask heuristics.
+				const unsigned char kv      = (face_grid && kindrow != nullptr) ? kindrow[x] : 0;
+				const bool          face_px = kv == 1;
+				const bool          surf_px = kv == 1 || kv == 2;
+				// EXULT_NL_PROBE="x0,y0,x1,y1" (screen px): dump this pixel's
+				// pre-gate state per splat, throttled per 8x8 cell.
+				static const char* const probe_env = std::getenv("EXULT_NL_PROBE");
+				if (probe_env != nullptr) {
+					static int  pbx0 = 0, pby0 = 0, pbx1 = -1, pby1 = -1;
+					static bool parsed = false;
+					if (!parsed) {
+						parsed = true;
+						std::sscanf(probe_env, "%d,%d,%d,%d", &pbx0, &pby0, &pbx1, &pby1);
+					}
+					if (x >= pbx0 && x <= pbx1 && y >= pby0 && y <= pby1) {
+						static std::map<std::tuple<int, int, int, int>, Uint64> last_p;
+						Uint64&                                                 lt_p = last_p[{x >> 3, y >> 3, sx, sy}];
+						const Uint64                                            nowp = SDL_GetTicks();
+						if (nowp - lt_p > 2000) {
+							lt_p           = nowp;
+							const int cidx = face_grid ? foot_cell(x, y) : -2;
+							std::fprintf(
+									stderr,
+									"[probe] px=(%d,%d) cs=(%d,%d) spill=%d veto=%d mark=%d kv=%d cell=%d gval=%d rfd=%d fa=%d "
+									"oa=%d t=%u\n",
+									x, y, sx, sy, static_cast<int>(is_spill), static_cast<int>(veto_roof),
+									roofrow != nullptr ? roofrow[x] : -1, kv, cidx,
+									cidx >= 0 ? (grid[static_cast<size_t>(cidx)] & 0x7f) : -1,
+									cidx >= 0 ? ring_face_dist(cidx % side, cidx / side) : -1, face_px ? face_alpha(x, y) : -1,
+									(face_grid && cidx >= 0) ? object_alpha(x, y, 4) : -1, static_cast<unsigned>(nowp));
+						}
+					}
+				}
 				bool bypass_field = false;
+				int  forced_a     = -1;
 				if (roofrow && roofrow[x]) {
 					if (veto_roof) {
 						// An under-roof light keeps marked pixels dark: real
@@ -2170,42 +2503,61 @@ namespace NaturalLight {
 						// propagated field like clear ground, so where the fill
 						// never reached, the field is 0 and it stays dark.
 						if (roofrow[x] < 129 || roofrow[x] - 128 >= light_top_storey) {
-							continue;    // Keep dark under this interior light.
+							// A whole-unit exterior OBJECT (a rampart beyond the
+							// window) can stand inside the fill's through-window
+							// reach: light it by the ring arrivals at its own
+							// cells (recorded regardless of light_walls) -- never
+							// z-blind, interior cells hang over it on the lattice.
+							if (grid == nullptr || ring == nullptr || kindrow == nullptr || kindrow[x] != 2 || roofrow[x] != 128) {
+								continue;    // Keep dark under this interior light.
+							}
+							forced_a = face_alpha(x, y);
+							if (forced_a <= 0) {
+								continue;
+							}
+							// Value parity with the inside view: the band's
+							// lower pixels borrow the brighter walkway cells
+							// hanging under them (bilinear field), like the
+							// z-blind sample gives them from inside.
+							if (trow != nullptr) {
+								const int ttx = x - sx - ftmpl->x0;
+								if (ttx >= 0 && ttx < ftmpl->w && trow[x] > forced_a) {
+									forced_a = trow[x];
+								}
+							}
 						}
 					} else if (is_spill) {
 						if (roofrow[x] == 255) {
 							continue;    // A spill never lights a real roof.
 						}
 						if (roofrow[x] == 132) {
-							// Exterior wall FACE: its pixels overlap the lattice
-							// cells BEHIND it up-screen, so the plain field sample
-							// borrows the window fan's ground light for a wall
-							// facing the other way.  Walk toward the foot (4px
-							// per z, down-right) to the wall's own RING cell
-							// (0x80-flagged in spill grids) and light the face
-							// only where that ring carries light: the facade
-							// near the opening glows, the far side of the
-							// corner does not.
+							// Exterior wall FACE: the plain field sample would
+							// borrow the window fan's ground light for a wall
+							// facing the other way.  Face pixels resolve by ring;
+							// others walk foot-ward (4px per z) to the wall's own
+							// 0x80 ring cell and light only where it carries light.
 							if (grid == nullptr) {
 								continue;
 							}
-							bool ring_lit = false;
-							for (int stp = 0; stp <= 7; ++stp) {
-								const float pu = (static_cast<float>(x + stp * 4) - grid_u) * inv_cell;
-								const float pv = (static_cast<float>(y + stp * 4) - grid_v) * inv_cell;
-								const int   cu = static_cast<int>(std::lround(pu));
-								const int   cv = static_cast<int>(std::lround(pv));
-								if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
-									break;
+							if (!surf_px) {
+								bool ring_lit = false;
+								for (int stp = 0; stp <= 7; ++stp) {
+									const float pu = (static_cast<float>(x + stp * 4) - grid_u) * inv_cell;
+									const float pv = (static_cast<float>(y + stp * 4) - grid_v) * inv_cell;
+									const int   cu = static_cast<int>(std::lround(pu));
+									const int   cv = static_cast<int>(std::lround(pv));
+									if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
+										break;
+									}
+									const unsigned char m = grid[static_cast<size_t>(cv) * side + cu];
+									if (m & 0x80) {
+										ring_lit = (m & 0x7f) != 0;
+										break;
+									}
 								}
-								const unsigned char m = grid[static_cast<size_t>(cv) * side + cu];
-								if (m & 0x80) {
-									ring_lit = (m & 0x7f) != 0;
-									break;
+								if (!ring_lit) {
+									continue;
 								}
-							}
-							if (!ring_lit) {
-								continue;
 							}
 							// Falls through to the normal field sample below.
 						} else if (roofrow[x] - 128 > spill_floor) {
@@ -2240,19 +2592,29 @@ namespace NaturalLight {
 						// cells hang up-screen.  Lighting them shows as a
 						// bright beam under the storey; everything the bubble
 						// may light up there is marked 128 + storey.
-						// INSIDE viewer: other buildings' ground walls have
-						// CLEAR faces that render up-screen of their feet and
-						// z-blind-sample the spill's lit outdoor cells (glow
-						// on a neighbour facade through nothing).  Escaped
-						// ground light is already the main splat's field
-						// continuing through the opening with true path
-						// falloff -- the spill keeps only its whole-unit
-						// 128 marks (tree canopies) when the viewer is inside.
-						continue;
+						// INSIDE viewer: escaped ground light is already the
+						// main splat's field through the opening; the spill
+						// keeps only its whole-unit 128 marks.  Face/object
+						// pixels of a GROUND spill resolve by their owner
+						// surface instead (the z-blind borrowing this skip
+						// guarded against); elevated spills stay skipped --
+						// their ring belongs to their own storey's lattice.
+						if (!(surf_px && light_top_storey < 1)) {
+							continue;
+						}
 					}
 				}
 				int a;
-				if (grid != nullptr && !bypass_field) {
+				if (forced_a >= 0) {
+					a = forced_a;
+				} else if (face_px) {
+					a = face_alpha(x, y);
+				} else if (surf_px && !bypass_field) {
+					// Whole-unit 128 marks keep the free-dome bypass: a tree
+					// crown near the lamp glows even though its trunk stands
+					// beyond the pool.
+					a = object_alpha(x, y, 0);
+				} else if (grid != nullptr && !bypass_field) {
 					// The field bounds itself within the template (cells beyond
 					// the pool are dark, their template bytes 0); OUTSIDE the
 					// template -- the euclid-spill ring between radius and reach
@@ -2270,21 +2632,43 @@ namespace NaturalLight {
 					// the travelled distance continued past `bias` for spills.
 					const int   dx    = x - sx;
 					const float dist2 = static_cast<float>(dx) * static_cast<float>(dx) + dy2;
-					if (dist2 > rr) {
-						continue;    // Outside the pool's ground reach.
-					}
-					float dome;
-					if (euclid_spill) {
-						dome = 1.0f - (dist2 + bias * bias + e2) / dome_dn;
-					} else {
-						float total2 = dist2;
-						if (bias > 0.0f) {
-							const float tot = std::sqrt(dist2) + bias;
-							total2          = tot * tot;
+					a                 = 0;
+					if (dist2 <= rr) {
+						float dome;
+						if (euclid_spill) {
+							dome = 1.0f - (dist2 + bias * bias + e2) / dome_dn;
+						} else {
+							float total2 = dist2;
+							if (bias > 0.0f) {
+								const float tot = std::sqrt(dist2) + bias;
+								total2          = tot * tot;
+							}
+							dome = 1.0f - (total2 + e2) / rf2;
 						}
-						dome = 1.0f - (total2 + e2) / rf2;
+						a = static_cast<int>(amp * dome + 0.5f);
 					}
-					a = static_cast<int>(amp * dome + 0.5f);
+					// A whole-unit object pixel also takes the brightest of its
+					// owner cells' arrivals (smoothed), its foot cell's field and
+					// the z-blind field at its own screen position: a tree crown
+					// keeps its near-lamp glow, a rampart lights along its length
+					// with the same wide wash the room field gives it from inside.
+					if (surf_px) {
+						const int oa = object_alpha(x, y, 4);
+						if (oa > a) {
+							a = oa;
+						}
+						const int sa = face_alpha(x, y);
+						if (sa > a) {
+							a = sa;
+						}
+						if (ftmpl != nullptr && trow != nullptr) {
+							const int ttx = x - sx - ftmpl->x0;
+							const int fv  = (ttx >= 0 && ttx < ftmpl->w) ? trow[x] : 0;
+							if (fv > a) {
+								a = fv;
+							}
+						}
+					}
 				}
 				if (a <= 0) {
 					continue;

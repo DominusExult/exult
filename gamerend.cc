@@ -464,6 +464,7 @@ void Game_window::paint(
 				const int                              rt    = radius / c_tilesize + 7;
 				const Tile_coord                       ltile = main_actor->get_tile();
 				std::vector<unsigned char>             lit;
+				std::vector<unsigned char>             ringv;
 				std::vector<NaturalLight::Light_spill> spills;
 				// Same under-roof verdict as placed lights: under a roof the
 				// torch keeps roof pixels dark, in the open it lights them.
@@ -471,7 +472,7 @@ void Game_window::paint(
 				// Wall ring off only when under a roof and viewed from outside
 				// (shows as a bright seam there); on otherwise so window faces glow.
 				const bool light_walls = is_main_actor_inside() || !under_roof;
-				NaturalLight::Build_light_shadow_grid(main_actor, rt, lit, spills, light_walls);
+				NaturalLight::Build_light_shadow_grid(main_actor, rt, lit, spills, light_walls, &ringv);
 				// moving = true: the torch follows the Avatar every frame.
 				add_light_render(
 						asx, asy, radius, tier, elevation, rt, ltile.tx, ltile.ty, ltile.tz, std::move(lit), under_roof, 0, false,
@@ -481,25 +482,29 @@ void Game_window::paint(
 				// (dist_bias), gated by its own spill grid, dimmed by the
 				// opening's transmission percent (see Light_spill).
 				for (const NaturalLight::Light_spill& spill : spills) {
-					const Tile_coord& sp           = spill.tile;
-					const int         spill_dist   = ltile.distance_2d(sp) * c_tilesize;
-					const int         spill_radius = radius - spill_dist;
+					const Tile_coord& sp = spill.tile;
+					// Budget by the fill's PATH to the opening, not the straight
+					// line: the wrap-around fill also exits under other buildings'
+					// eaves, where the light has already spent its whole reach.
+					const int spill_dist   = std::max(ltile.distance_2d(sp), spill.path) * c_tilesize;
+					const int spill_radius = radius - spill_dist;
 					if (spill_radius <= 0) {
 						continue;
 					}
 					// +7: rounding slack plus the wall-top anchor shift (see rt).
 					const int                  srt = spill_radius / c_tilesize + 7;
 					std::vector<unsigned char> slit;
+					std::vector<unsigned char> sring;
 					// Facade ring only for an outside viewer: seen from inside,
 					// the ring's z-blind cells hang over the walls' INTERIOR
 					// faces up-screen and glow through neighbouring rooms.
-					NaturalLight::Build_spill_shadow_grid(sp, srt, slit, !is_main_actor_inside());
+					NaturalLight::Build_spill_shadow_grid(sp, srt, slit, !is_main_actor_inside(), &sring);
 					int ssx = 0;
 					int ssy = 0;
 					get_shape_location(sp, ssx, ssy);
 					add_light_render(
 							ssx, ssy, spill_radius, tier, elevation, srt, sp.tx, sp.ty, sp.tz, std::move(slit), false, spill_dist,
-							true, spill.percent, spill.floor, true);
+							true, spill.percent, spill.floor, true, std::move(sring));
 				}
 			}
 			// Also check light spell.
@@ -746,7 +751,12 @@ int Game_render::paint_chunk_objects(
 			const bool blocked   = vis.blocked;
 			const int  crossings = vis.crossings;
 
-			if (blocked) {
+			// An EXTERIOR light's containment is the field's job: keep
+			// splatting it even when it cannot reach the viewer (stepping a
+			// chunk over inside the barn used to vanish the lamppost pool seen
+			// through the door).  Blocked lights still never count toward the
+			// legacy global palette below.
+			if (blocked && (day_palette || NaturalLight::Light_beneath_roof(light_obj))) {
 				continue;
 			}
 			// Spatial lighting: record this (unblocked) source so
@@ -773,41 +783,42 @@ int Game_render::paint_chunk_objects(
 				const int                              rt    = radius / c_tilesize + 7;
 				const Tile_coord                       ltile = light_obj->get_tile();
 				std::vector<unsigned char>             lit;
+				std::vector<unsigned char>             ringv;
 				std::vector<NaturalLight::Light_spill> spills;
 				// Wall ring only when the Avatar is inside on this light's own
 				// storey: from any other storey (or outside) the ring peeks out
 				// as a stray glow on the wall faces.
 				const bool light_walls
 						= (gwin->is_main_actor_inside() && gwin->get_main_actor()->get_lift() / 5 == ltile.tz / 5) || !under_roof;
-				NaturalLight::Build_light_shadow_grid(light_obj, rt, lit, spills, light_walls);
-				gwin->add_light_render(
-						lsx, lsy, radius, tier, elevation, rt, ltile.tx, ltile.ty, ltile.tz, std::move(lit), under_roof);
+				NaturalLight::Build_light_shadow_grid(light_obj, rt, lit, spills, light_walls, &ringv);
 				// Spill glow per reached opening (see the carried-light site).
 				for (const NaturalLight::Light_spill& spill : spills) {
-					const Tile_coord& sp           = spill.tile;
-					const int         spill_dist   = ltile.distance_2d(sp) * c_tilesize;
-					const int         spill_radius = radius - spill_dist;
+					const Tile_coord& sp = spill.tile;
+					// Path-distance budget (see the carried-light site).
+					const int spill_dist   = std::max(ltile.distance_2d(sp), spill.path) * c_tilesize;
+					const int spill_radius = radius - spill_dist;
 					if (spill_radius <= 0) {
 						continue;
 					}
 					// +7: rounding slack plus the wall-top anchor shift (see rt).
 					const int                  srt = spill_radius / c_tilesize + 7;
 					std::vector<unsigned char> slit;
+					std::vector<unsigned char> sring;
 					// Facade ring only for an outside viewer (see carried-light site).
-					NaturalLight::Build_spill_shadow_grid(sp, srt, slit, !gwin->is_main_actor_inside());
+					NaturalLight::Build_spill_shadow_grid(sp, srt, slit, !gwin->is_main_actor_inside(), &sring);
 					int ssx = 0;
 					int ssy = 0;
 					gwin->get_shape_location(sp, ssx, ssy);
 					gwin->add_light_render(
 							ssx, ssy, spill_radius, tier, elevation, srt, sp.tx, sp.ty, sp.tz, std::move(slit), false, spill_dist,
-							true, spill.percent, spill.floor);
+							true, spill.percent, spill.floor, false, std::move(sring));
 				}
 			}
 			// Dim once per inside/outside crossing (floored at the lowest lit
 			// palette, never to darkness).  Only strength > 0 contributes: a
 			// distance-culled light kept for its spatial glow must not inflate
 			// the legacy global light count.
-			if (strength > 0) {
+			if (strength > 0 && !blocked) {
 				int effective = strength;
 				for (int i = 0; i < crossings; ++i) {
 					effective /= light_pass_dim_divisor;

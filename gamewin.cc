@@ -1361,6 +1361,13 @@ void Game_window::begin_roof_mask() {
 		roof_light_mask = std::make_unique<Image_buffer8>(bw, bh);
 	}
 	roof_light_mask->fill8(0);    // 0 = not a roof pixel.
+	if (!light_kind_mask || static_cast<int>(light_kind_mask->get_width()) != bw
+		|| static_cast<int>(light_kind_mask->get_height()) != bh) {
+		light_kind_mask = std::make_unique<Image_buffer8>(bw, bh);
+	}
+	light_kind_mask->fill8(0);    // 0 = ground kind.
+	light_foot_dx.assign(static_cast<size_t>(bw) * bh, 128);
+	light_foot_dy.assign(static_cast<size_t>(bw) * bh, 128);
 	roof_light_mask_active = true;
 }
 
@@ -1400,6 +1407,12 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 			return;
 		}
 	}
+	// Actors leave every channel untouched (mask, kind, feet): they move each
+	// frame, and any actor-shaped stamp bakes ghosts into the cached static
+	// coverage.  Their pixels light like the surface behind them.
+	if (obj->as_actor() != nullptr) {
+		return;
+	}
 	// Mask values: 255 = roof, 128 + storey = tall / upper-storey shape,
 	// 0 = clear.  How each light kind treats them is decided in
 	// Splat_radial_light's pixel loop.
@@ -1438,6 +1451,87 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 		}
 		return x;
 	}();
+	// Surface-identity channels (face design §4.1): the topmost sprite at a
+	// pixel owns its KIND; wall faces and objects also record their per-tile
+	// foot offset so the splat can sample the owner's cell instead of the
+	// cells the sprite overlaps.  Viewer-independent (R5).
+	if (light_kind_mask && !light_foot_dx.empty()) {
+		const Shape_info& sinf = obj->get_info();
+		int               kind = 0;
+		if (sinf.is_solid() && !sinf.is_floor() && !sinf.is_roof()) {
+			// Panes and open door leaves stay GROUND: they glow with the
+			// light behind them.
+			if ((sinf.is_door() && !obj->is_closed_door()) || NaturalLight::Object_passes_light(obj)) {
+				kind = 0;
+			} else {
+				kind = NaturalLight::Object_is_wall_face(obj) ? 1 : 2;
+			}
+		}
+		if (kind == 0) {
+			frame->paint_rle_transformed(light_kind_mask.get(), sx, sy, roof_clear);
+		} else {
+			// Per-pixel foot offsets vary across the sprite, so rasterize its
+			// coverage into a scratch buffer and write the channels by hand.
+			const int                             fw = frame->get_width();
+			const int                             fh = frame->get_height();
+			static std::unique_ptr<Image_buffer8> scratch;
+			if (!scratch || static_cast<int>(scratch->get_width()) < fw || static_cast<int>(scratch->get_height()) < fh) {
+				const int sw = std::max(fw, scratch ? static_cast<int>(scratch->get_width()) : 0);
+				const int sh = std::max(fh, scratch ? static_cast<int>(scratch->get_height()) : 0);
+				scratch      = std::make_unique<Image_buffer8>(sw, sh);
+			}
+			scratch->fill8(0, fw, fh, 0, 0);
+			frame->paint_rle_transformed(scratch.get(), frame->get_xleft(), frame->get_yabove(), roof_set);
+			unsigned char*       kbits = light_kind_mask->get_bits();
+			const int            klw   = static_cast<int>(light_kind_mask->get_line_width());
+			const int            W     = static_cast<int>(light_kind_mask->get_width());
+			const int            H     = static_cast<int>(light_kind_mask->get_height());
+			const unsigned char* sbits = scratch->get_bits();
+			const int            slw   = static_cast<int>(scratch->get_line_width());
+			// Hot spot = anchor tile's bottom-right pixel shifted up-left by
+			// 4px per z (Get_shape_location); undo the lift for the z=0 foot.
+			const int f0x = sx + 4 * obj->get_lift();
+			const int f0y = sy + 4 * obj->get_lift();
+			const int xts = sinf.get_3d_xtiles(obj->get_framenum());
+			const int yts = sinf.get_3d_ytiles(obj->get_framenum());
+			// Snap to the centre of the footprint tile under the pixel, so a
+			// long wall fades per tile instead of by its single anchor.
+			auto snap = [](int p, int f0, int nt) {
+				int i = (f0 - p) >> 3;    // c_tilesize == 8
+				if (i < 0) {
+					i = 0;
+				} else if (i >= nt) {
+					i = nt - 1;
+				}
+				return f0 - i * c_tilesize - c_tilesize / 2;
+			};
+			const int x0 = sx - frame->get_xleft();
+			const int y0 = sy - frame->get_yabove();
+			for (int y = 0; y < fh; ++y) {
+				const int py = y0 + y;
+				if (py < 0 || py >= H) {
+					continue;
+				}
+				const unsigned char* srow = sbits + static_cast<size_t>(y) * slw;
+				for (int x = 0; x < fw; ++x) {
+					if (srow[x] == 0) {
+						continue;
+					}
+					const int px = x0 + x;
+					if (px < 0 || px >= W) {
+						continue;
+					}
+					int ddx                                         = snap(px, f0x, xts) - px;
+					int ddy                                         = snap(py, f0y, yts) - py;
+					ddx                                             = ddx < -128 ? -128 : (ddx > 127 ? 127 : ddx);
+					ddy                                             = ddy < -128 ? -128 : (ddy > 127 ? 127 : ddy);
+					kbits[static_cast<size_t>(py) * klw + px]       = static_cast<unsigned char>(kind);
+					light_foot_dx[static_cast<size_t>(py) * W + px] = static_cast<unsigned char>(ddx + 128);
+					light_foot_dy[static_cast<size_t>(py) * W + px] = static_cast<unsigned char>(ddy + 128);
+				}
+			}
+		}
+	}
 	// An object standing ON a roof must stay as dark as the roof under it.
 	// "Roof level" is the render-skip lift while inside (NOT a hardcoded z 5:
 	// a tall room's visible upper wall segments are walls, not roofs) and the
@@ -1461,26 +1555,7 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 		return s < 0 ? 0 : (s > 3 ? 3 : s);
 	};
 	int tall_storey = 0;
-	if (obj->as_actor() != nullptr) {
-		// Actors are never marked as a real roof (255).  On an open-sky deck
-		// mark 128 like the deck objects around them (dark under the room
-		// below, lit whole by spills / exterior / carried light); at ground
-		// level or under an interior roof stay clear.
-		const int top         = obj->get_lift() + obj->get_info().get_3d_height();
-		const int floor_level = inside ? get_render_skip_lift() : 5;
-		if (obj->get_lift() >= floor_level && open_sky_above(top)) {
-			roof_like     = true;
-			tall_exterior = true;
-		} else if (inside && obj->get_lift() >= 5) {
-			// An actor on an upper storey below the render skip: mark
-			// 128 + storey like the walls and furniture up there.
-			roof_like     = true;
-			tall_exterior = true;
-			tall_storey   = storey_of(obj->get_lift());
-		} else {
-			roof_like = false;
-		}
-	} else if (obj->get_info().is_floor()) {
+	if (obj->get_info().is_floor()) {
 		// A floor slab used as the storey below's ceiling: mark its flat TOP
 		// 128 + storey (not 255) so a deck-level spill still lights it while
 		// a ground window's glow is storey-gated off.  Inside, the slab's
@@ -1699,12 +1774,26 @@ void Game_window::build_light_layers() {
 	// every light so an interior light never lights up the roof over it.
 	const unsigned char* roofpix = (roof_light_mask_active && roof_light_mask) ? roof_light_mask->get_bits() : nullptr;
 	const int            roof_lw = roofpix ? static_cast<int>(roof_light_mask->get_line_width()) : 0;
+	// Surface-identity channels for the face/object consumers.
+	const unsigned char* kindpix
+			= (roofpix != nullptr && light_kind_mask && !light_foot_dx.empty()) ? light_kind_mask->get_bits() : nullptr;
+	const int            kind_lw = kindpix ? static_cast<int>(light_kind_mask->get_line_width()) : 0;
+	const int            foot_lw = kindpix ? static_cast<int>(light_kind_mask->get_width()) : 0;
+	const unsigned char* footdxp = kindpix ? light_foot_dx.data() : nullptr;
+	const unsigned char* footdyp = kindpix ? light_foot_dy.data() : nullptr;
 
 	// INSIDE, the room mask applies to every light (the roof mask on top so
 	// nothing spills onto a still-drawn roof).  OUTSIDE, it still applies to a
 	// light itself under a roof (lr.mask_roof) so its walls contain it, while
 	// an exterior light stays unmasked and brightens nearby house roofs.
 	const bool inside = is_main_actor_inside();
+	// The viewer's z=0 foot position, for the splat's viewer-side face rule.
+	int av_fx = 0;
+	int av_fy = 0;
+	if (main_actor != nullptr) {
+		const Tile_coord at = main_actor->get_tile();
+		get_shape_location(Tile_coord(at.tx, at.ty, 0), av_fx, av_fy);
+	}
 
 	// Per-tier signature of the STATIC (world-pinned) lights shaping this
 	// frame's coverage masks.  Positions are hashed RELATIVE to the tier's
@@ -1782,6 +1871,8 @@ void Game_window::build_light_layers() {
 		}
 	}
 
+	// Actor screen boxes were zeroed and re-splatted here; actors no longer
+	// stamp any channel, so cached coverage is silhouette-free by itself.
 	for (int t = 0; t < 3; ++t) {
 		bool any = false;
 		for (const auto& lr : light_renders) {
@@ -1943,7 +2034,15 @@ void Game_window::build_light_layers() {
 				NaturalLight::Splat_radial_light(
 						covp, dstpix, srcpix, W, H, dst_lw, src_lw, csx, csy, lr.radius, lr.elevation, lr.dist_bias,
 						lr.spill_percent, roofpix, roof_lw, mask_roof, lr.is_spill, spill_floor, light_top_storey, lr.ltz / 5,
-						field_anchor_z, grid, grid_rt, grid_fx, grid_fy, inside, cx0, cy0, cx1, cy1);
+						field_anchor_z, grid, grid_rt, grid_fx, grid_fy, inside, cx0, cy0, cx1, cy1, kindpix, kind_lw, footdxp,
+						footdyp, foot_lw,
+						// No ring in dungeons: they are wholly interior, the
+						// classic rendering is correct there (and lights the
+						// walls' near strips the face rule would darken).
+						!is_in_dungeon() && lr.ring.size() == static_cast<size_t>(2 * grid_rt + 1) * (2 * grid_rt + 1) * 4
+								? lr.ring.data()
+								: nullptr,
+						av_fx, av_fy);
 			}
 			// Match Splat_radial_light's reach: only an ELEVATED spill's
 			// dome extends sqrt(r^2 + 2*r*bias), capped at 1.5r.

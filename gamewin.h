@@ -151,6 +151,9 @@ class Game_window {
 		// Room-fill grid ((2*rt+1) square) from Build_light_shadow_grid: light
 		// floods the room bounded by tall walls.  Empty = no gating.
 		std::vector<unsigned char> lit;
+		// Per-wall-cell face arrival distances (4 bytes/cell [S,E,N,W]; see
+		// Flood_room_grid), consumed by the splat's face/object rules.
+		std::vector<unsigned char> ring;
 	};
 
 	std::vector<Light_render_info> light_renders;
@@ -201,6 +204,12 @@ class Game_window {
 	// Last frame's splat rectangles (grown by a margin): update_roof_mask
 	// only paints the mask where a sprite touches one of them.
 	std::vector<TileRect> light_mask_rects;
+	// Surface-identity channels, stamped beside the roof mask in painter's
+	// order: per-pixel owner KIND (0 ground, 1 wall face, 2 object) plus the
+	// screen offset from the pixel to its owner's per-tile foot at z=0 (one
+	// byte each, offset+128).  Consumed by Splat_radial_light.
+	std::unique_ptr<Image_buffer8> light_kind_mask;
+	std::vector<unsigned char>     light_foot_dx, light_foot_dy;
 	// A static light set changed this frame: schedule a full repaint AFTER
 	// paint_dirty's clear_dirty so the roof mask gets stamped under the new
 	// light rects next frame (see build_light_layers' full-rebuild path).
@@ -590,10 +599,10 @@ public:
 	void add_light_render(
 			int sx, int sy, int radius, int tier, int elevation, int rt, int ltx, int lty, int ltz, std::vector<unsigned char> lit,
 			bool mask_roof = false, int dist_bias = 0, bool is_spill = false, int spill_percent = 100, int spill_floor = 0,
-			bool moving = false) {
+			bool moving = false, std::vector<unsigned char> ring = {}) {
 		light_renders.push_back(
 				{sx, sy, radius, tier, elevation, rt, ltx, lty, ltz, mask_roof, dist_bias, is_spill, spill_percent, spill_floor,
-				 moving, std::move(lit)});
+				 moving, std::move(lit), std::move(ring)});
 	}
 
 	void build_light_layers();
