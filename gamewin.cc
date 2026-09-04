@@ -1546,6 +1546,47 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 		Map_chunk* const chunk = map->get_chunk_safely(t.tx / c_tiles_per_chunk, t.ty / c_tiles_per_chunk);
 		return chunk != nullptr && chunk->get_lowest_blocked(top, t.tx % c_tiles_per_chunk, t.ty % c_tiles_per_chunk) < 0;
 	};
+	// Solid support from the ground to the object's lift (a crenellation
+	// capping a rampart): it lights with the wall beneath as one whole unit.
+	// A gap below (a deck object -- the room's air under the floor-roof)
+	// makes it belong to its storey instead.
+	auto solid_below = [&]() {
+		const Tile_coord t     = obj->get_tile();
+		Map_chunk* const chunk = map->get_chunk_safely(t.tx / c_tiles_per_chunk, t.ty / c_tiles_per_chunk);
+		if (chunk == nullptr) {
+			return false;
+		}
+		for (int z = 0; z < obj->get_lift(); ++z) {
+			if (!chunk->is_tile_occupied(t.tx % c_tiles_per_chunk, t.ty % c_tiles_per_chunk, z)) {
+				return false;
+			}
+		}
+		return true;
+	};
+	// A floor-roof / roof piece right at the object's base: a deck object
+	// even where the wall line below it is solid to the ground.
+	auto floor_at_base = [&]() {
+		const Tile_coord t     = obj->get_tile();
+		Map_chunk* const chunk = map->get_chunk_safely(t.tx / c_tiles_per_chunk, t.ty / c_tiles_per_chunk);
+		if (chunk == nullptr) {
+			return false;
+		}
+		Object_iterator it(chunk->get_objects());
+		Game_object*    o;
+		while ((o = it.get_next()) != nullptr) {
+			if (o == obj || (!o->get_info().is_floor() && !o->get_info().is_roof())) {
+				continue;
+			}
+			const int base = o->get_lift() + o->get_info().get_3d_height();
+			if (base < obj->get_lift() - 1 || base > obj->get_lift()) {
+				continue;
+			}
+			if (o->get_footprint().has_world_point(t.tx, t.ty)) {
+				return true;
+			}
+		}
+		return false;
+	};
 	bool roof_like;
 	bool tall_exterior = false;
 	// Storey a tall-exterior mark belongs to (mask value 128 + storey): a
@@ -1601,10 +1642,16 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 			return;
 		}
 		if (roof_like && !is_roof_shape && open_sky_above(top)) {
-			// An object standing on an open-sky deck (castle battlements):
-			// plain 128, so a spill from any storey lights its face (only the
-			// flat slab TOP is storey-gated, see the is_floor branch).
+			// An object standing on an open-sky deck (castle battlements,
+			// roof crenellations): mark 128 + storey, so only its own
+			// storey's lights and spills reach it -- a ground window's glow
+			// must not paint the crenellations a storey above it.  A cap on
+			// a solid wall with no floor-roof at its base (a rampart
+			// crenellation) stays a whole unit with the wall instead.
 			tall_exterior = true;
+			if (!solid_below() || floor_at_base()) {
+				tall_storey = storey_of(obj->get_lift());
+			}
 		} else if (!roof_like && top > get_render_skip_lift()) {
 			// A grounded shape rising above the room's ceiling can only be an
 			// exterior one (an outside tree); confirm open sky above its top
@@ -1641,8 +1688,13 @@ void Game_window::update_roof_mask(Game_object* obj, int sx, int sy) {
 		roof_like                = is_roof_shape || obj->get_lift() >= 5;
 		const int top            = obj->get_lift() + obj->get_info().get_3d_height();
 		if (roof_like && !is_roof_shape && open_sky_above(top)) {
-			// Object on an open-sky deck: plain 128, as in the inside branch.
+			// Object on an open-sky deck: 128 + storey, as in the inside
+			// branch; a cap on a solid wall with no floor-roof at its base
+			// stays a whole unit.
 			tall_exterior = true;
+			if (!solid_below() || floor_at_base()) {
+				tall_storey = storey_of(obj->get_lift());
+			}
 		} else if (roof_like && !is_roof_shape) {
 			// A second storey's wall / furnishing seen from outside: mark
 			// 128 + storey so only its own storey's lights and spills reach it.

@@ -1234,6 +1234,10 @@ namespace NaturalLight {
             return m == 1;
 		};
 		const bool start_roofed = spills != nullptr && roofed(rt, rt);
+		// Has the fill ESCAPED the start enclosure by the time it reaches a
+		// cell -- crossed a roof boundary or passed a light-passes opening?
+		// Robust against eaves over walkways, unlike per-cell roofed-ness.
+		std::vector<unsigned char> esc(static_cast<size_t>(side) * side, start_roofed ? 0 : 1);
 		// Record a tile's path distance (+1), keeping the smallest when a wall
 		// face is reached again from another direction.
 		auto set_dist = [&](size_t idx, int dist) {
@@ -1367,9 +1371,13 @@ namespace NaturalLight {
 					}
 					// FACE arrival channel, independent of light_walls: record
 					// which side the fill reached this wall from (stepping
-					// north hits its S side, etc.).
+					// north hits its S side, etc.).  Byte 2/3 high bits mark a
+					// cell reached by ESCAPED / interior fill: only cells
+					// touched exclusively by escaped light may certify exterior
+					// whole-unit objects.
 					if (ring != nullptr) {
 						(*ring)[nidx * 4] |= 0x80;    // Wall-cell marker.
+						(*ring)[nidx * 4 + (esc[static_cast<size_t>(gy) * side + gx] != 0 ? 2 : 3)] |= 0x80;
 					}
 					if (d[1] < 0) {
 						set_ring(nidx, 0, gdist + 1);
@@ -1433,6 +1441,10 @@ namespace NaturalLight {
 				}
 				visited[nidx] = 1;
 				set_dist(nidx, gdist + 1);
+				esc[nidx] = esc[static_cast<size_t>(gy) * side + gx] != 0 || opening(gx, gy) > 0
+											|| (start_roofed && roofed(gx, gy) && !roofed(nx, ny))
+									? 1
+									: 0;
 				queue.emplace_back(nx, ny);
 			}
 			// Diagonal floor steps keep the path metric Chebyshev-like: without
@@ -1470,6 +1482,10 @@ namespace NaturalLight {
 				}
 				visited[nidx] = 1;
 				set_dist(nidx, gdist + 1);
+				esc[nidx] = esc[static_cast<size_t>(gy) * side + gx] != 0 || opening(gx, gy) > 0
+											|| (start_roofed && roofed(gx, gy) && !roofed(nx, ny))
+									? 1
+									: 0;
 				queue.emplace_back(nx, ny);
 			}
 		}
@@ -2362,15 +2378,10 @@ namespace NaturalLight {
 		// WALL_FACE consumer: brightness = the fill's arrival at the
 		// OWNER tile's viewer-side face, never the cells the sprite overlaps
 		// up-screen.  Uncertified side = dark; no grid = free dome.
-		auto face_alpha = [&](int px, int py) -> int {
-			const size_t fi = static_cast<size_t>(py) * foot_lw + px;
-			const int    fx = px + static_cast<int>(footdx[fi]) - 128 - foot_shift;
-			const int    fy = py + static_cast<int>(footdy[fi]) - 128 - foot_shift;
-			const int    cu = static_cast<int>(std::lround((static_cast<float>(fx) - grid_u) * inv_cell));
-			const int    cv = static_cast<int>(std::lround((static_cast<float>(fy) - grid_v) * inv_cell));
-			if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
-				return 0;
-			}
+		// Smoothed arrival dome around an explicit cell (face_alpha resolves
+		// the cell from the pixel's foot; the veto exemption may pass a
+		// walked cell instead -- a thick solid's interior columns).
+		auto face_alpha_from = [&](int px, int py, int fx, int fy, int cu, int cv) -> int {
 			// Blend the per-tile value with the neighbouring wall cells by the
 			// pixel's sub-tile offset from its snapped foot (the smooth
 			// gradient the bilinear field shows from inside); non-wall
@@ -2394,6 +2405,17 @@ namespace NaturalLight {
 							 + static_cast<float>(cell_a(cu, nv)) * wy;
 			return static_cast<int>(av + 0.5f);
 		};
+		auto face_alpha = [&](int px, int py) -> int {
+			const size_t fi = static_cast<size_t>(py) * foot_lw + px;
+			const int    fx = px + static_cast<int>(footdx[fi]) - 128 - foot_shift;
+			const int    fy = py + static_cast<int>(footdy[fi]) - 128 - foot_shift;
+			const int    cu = static_cast<int>(std::lround((static_cast<float>(fx) - grid_u) * inv_cell));
+			const int    cv = static_cast<int>(std::lround((static_cast<float>(fy) - grid_v) * inv_cell));
+			if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
+				return 0;
+			}
+			return face_alpha_from(px, py, fx, fy, cu, cv);
+		};
 		// The field at the object's OWN foot cell --
 		// dark in a room shadow even where the sprite overlaps lit exterior;
 		// its own cell carries the wall-ring arrival, so a tree or post in the
@@ -2412,19 +2434,61 @@ namespace NaturalLight {
 			const int tu = static_cast<int>(std::lround(uc));
 			const int tv = static_cast<int>(std::lround(vc));
 			for (int step = 0; d == 0 && step < max_walk; ++step) {
-				const int su = tu > cu ? 1 : (tu < cu ? -1 : 0);
-				const int sv = tv > cv ? 1 : (tv < cv ? -1 : 0);
-				if (su == 0 && sv == 0) {
+				// Dominant axis only: a diagonal walk drifts along the wall
+				// toward the light and lands on CLOSER edge cells, lighting
+				// interior-column pixels brighter than the near edge itself.
+				const int du = tu - cu;
+				const int dv = tv - cv;
+				if (du == 0 && dv == 0) {
 					break;
 				}
-				cu += su;
-				cv += sv;
+				if (std::abs(du) >= std::abs(dv)) {
+					cu += du > 0 ? 1 : -1;
+				} else {
+					cv += dv > 0 ? 1 : -1;
+				}
 				if (cu < 0 || cv < 0 || cu >= side || cv >= side) {
 					return 0;
 				}
 				d = grid[static_cast<size_t>(cv) * side + cu] & 0x7f;
 			}
-			return cell_dome(cv * side + cu, d);
+			const int base = cell_dome(cv * side + cu, d);
+			if (!is_spill || max_walk <= 0) {
+				return base;
+			}
+			// Spills: stacked blocks (merlons vs the deck body) put adjacent
+			// screen columns on cells up to ~2 rows apart; on the spill's
+			// steep rim that honest offset reads as a hard seam.  Flatten it
+			// by taking the max over the wall's own reached ring cells within
+			// +/-2 along each axis -- one smooth envelope, like the room
+			// field shows the surface from inside.
+			int best = base;
+			for (int k = -2; k <= 2; ++k) {
+				if (k == 0) {
+					continue;
+				}
+				const int nu = cu + k;
+				const int nv = cv + k;
+				if (nu >= 0 && nu < side) {
+					const unsigned char m = grid[static_cast<size_t>(cv) * side + nu];
+					if ((m & 0x80) != 0 && (m & 0x7f) != 0) {
+						const int v_ = cell_dome(cv * side + nu, m & 0x7f);
+						if (v_ > best) {
+							best = v_;
+						}
+					}
+				}
+				if (nv >= 0 && nv < side) {
+					const unsigned char m = grid[static_cast<size_t>(nv) * side + cu];
+					if ((m & 0x80) != 0 && (m & 0x7f) != 0) {
+						const int v_ = cell_dome(nv * side + cu, m & 0x7f);
+						if (v_ > best) {
+							best = v_;
+						}
+					}
+				}
+			}
+			return best;
 		};
 		// ACTOR pixels (kind 3) sample like ground here -- silhouette-shaped
 		// deviations would ghost in the cached static coverage; their cap at
@@ -2472,16 +2536,21 @@ namespace NaturalLight {
 						const Uint64                                            nowp = SDL_GetTicks();
 						if (nowp - lt_p > 2000) {
 							lt_p           = nowp;
-							const int cidx = face_grid ? foot_cell(x, y) : -2;
+							const int cidx = (kindrow != nullptr && grid != nullptr && footdx != nullptr) ? foot_cell(x, y) : -2;
+							const int b2
+									= (cidx >= 0 && ring != nullptr) ? ((ring[static_cast<size_t>(cidx) * 4 + 2] >> 7) & 1) : -1;
+							const int b3
+									= (cidx >= 0 && ring != nullptr) ? ((ring[static_cast<size_t>(cidx) * 4 + 3] >> 7) & 1) : -1;
 							std::fprintf(
 									stderr,
-									"[probe] px=(%d,%d) cs=(%d,%d) spill=%d veto=%d mark=%d kv=%d cell=%d gval=%d rfd=%d fa=%d "
-									"oa=%d t=%u\n",
+									"[probe] px=(%d,%d) cs=(%d,%d) spill=%d veto=%d mark=%d kv=%d kraw=%d cell=%d gval=%d "
+									"b2=%d b3=%d rfd=%d fa=%d oa=%d t=%u\n",
 									x, y, sx, sy, static_cast<int>(is_spill), static_cast<int>(veto_roof),
-									roofrow != nullptr ? roofrow[x] : -1, kv, cidx,
-									cidx >= 0 ? (grid[static_cast<size_t>(cidx)] & 0x7f) : -1,
-									cidx >= 0 ? ring_face_dist(cidx % side, cidx / side) : -1, face_px ? face_alpha(x, y) : -1,
-									(face_grid && cidx >= 0) ? object_alpha(x, y, 4) : -1, static_cast<unsigned>(nowp));
+									roofrow != nullptr ? roofrow[x] : -1, kv, kindrow != nullptr ? kindrow[x] : -1, cidx,
+									cidx >= 0 ? (grid[static_cast<size_t>(cidx)] & 0x7f) : -1, b2, b3,
+									(cidx >= 0 && ring != nullptr) ? ring_face_dist(cidx % side, cidx / side) : -1,
+									(cidx >= 0 && ring != nullptr) ? face_alpha(x, y) : -1, cidx >= 0 ? object_alpha(x, y, 4) : -1,
+									static_cast<unsigned>(nowp));
 						}
 					}
 				}
@@ -2506,24 +2575,70 @@ namespace NaturalLight {
 							// A whole-unit exterior OBJECT (a rampart beyond the
 							// window) can stand inside the fill's through-window
 							// reach: light it by the ring arrivals at its own
-							// cells (recorded regardless of light_walls) -- never
-							// z-blind, interior cells hang over it on the lattice.
+							// cells -- but only cells touched EXCLUSIVELY by
+							// escaped (outdoor) fill: cells with roofed arrivals
+							// belong to the light's own room boundary, and
+							// lighting them paints the crenellations on its roof.
 							if (grid == nullptr || ring == nullptr || kindrow == nullptr || kindrow[x] != 2 || roofrow[x] != 128) {
 								continue;    // Keep dark under this interior light.
 							}
-							forced_a = face_alpha(x, y);
-							if (forced_a <= 0) {
+							// A thick solid's interior columns carry no arrivals
+							// (the fill can never enter them): walk the foot cell
+							// toward the splat centre to the wall's fill-facing
+							// edge cell -- the same value a walls=1 inside grid
+							// holds in lit[] -- and gate + light by THAT cell.
+							const size_t fi_v = static_cast<size_t>(y) * foot_lw + x;
+							const int    fx_v = x + static_cast<int>(footdx[fi_v]) - 128 - foot_shift;
+							const int    fy_v = y + static_cast<int>(footdy[fi_v]) - 128 - foot_shift;
+							int          wu_v = static_cast<int>(std::lround((static_cast<float>(fx_v) - grid_u) * inv_cell));
+							int          wv_v = static_cast<int>(std::lround((static_cast<float>(fy_v) - grid_v) * inv_cell));
+							if (wu_v < 0 || wv_v < 0 || wu_v >= side || wv_v >= side) {
 								continue;
 							}
-							// Value parity with the inside view: the band's
-							// lower pixels borrow the brighter walkway cells
-							// hanging under them (bilinear field), like the
-							// z-blind sample gives them from inside.
+							{
+								const int tu_v = static_cast<int>(std::lround(uc));
+								const int tv_v = static_cast<int>(std::lround(vc));
+								for (int step = 0; step < 4 && (ring[(static_cast<size_t>(wv_v) * side + wu_v) * 4] & 0x80) == 0;
+									 ++step) {
+									// Dominant axis only, as in object_alpha.
+									const int du = tu_v - wu_v;
+									const int dv = tv_v - wv_v;
+									if (du == 0 && dv == 0) {
+										break;
+									}
+									if (std::abs(du) >= std::abs(dv)) {
+										wu_v += du > 0 ? 1 : -1;
+									} else {
+										wv_v += dv > 0 ? 1 : -1;
+									}
+									if (wu_v < 0 || wv_v < 0 || wu_v >= side || wv_v >= side) {
+										wu_v = -1;
+										break;
+									}
+								}
+							}
+							if (wu_v < 0) {
+								continue;
+							}
+							const size_t wcell = static_cast<size_t>(wv_v) * side + wu_v;
+							if ((ring[wcell * 4 + 2] & 0x80) == 0 || (ring[wcell * 4 + 3] & 0x80) != 0) {
+								continue;
+							}
+							// The honest through-window arrival dome (what the
+							// walls=1 inside grid computes), plus the z-blind
+							// field bleed the inside bilinear shows near the
+							// foot -- never the free dome or the walkway cells'
+							// own field: both wash flat bands far past the
+							// window's true reach.
+							forced_a = face_alpha_from(x, y, fx_v, fy_v, wu_v, wv_v);
 							if (trow != nullptr) {
 								const int ttx = x - sx - ftmpl->x0;
 								if (ttx >= 0 && ttx < ftmpl->w && trow[x] > forced_a) {
 									forced_a = trow[x];
 								}
+							}
+							if (forced_a <= 0) {
+								continue;
 							}
 						}
 					} else if (is_spill) {
@@ -2652,16 +2767,25 @@ namespace NaturalLight {
 					// the z-blind field at its own screen position: a tree crown
 					// keeps its near-lamp glow, a rampart lights along its length
 					// with the same wide wash the room field gives it from inside.
+					// A/B attribution switches: EXULT_NL_NO_OA / _NO_FACEMAX /
+					// _NO_TROWMAX disable one term each.
 					if (surf_px) {
-						const int oa = object_alpha(x, y, 4);
-						if (oa > a) {
-							a = oa;
+						static const bool no_oa    = std::getenv("EXULT_NL_NO_OA") != nullptr;
+						static const bool no_famax = std::getenv("EXULT_NL_NO_FACEMAX") != nullptr;
+						static const bool no_trmax = std::getenv("EXULT_NL_NO_TROWMAX") != nullptr;
+						if (!no_oa) {
+							const int oa = object_alpha(x, y, 4);
+							if (oa > a) {
+								a = oa;
+							}
 						}
-						const int sa = face_alpha(x, y);
-						if (sa > a) {
-							a = sa;
+						if (!no_famax) {
+							const int sa = face_alpha(x, y);
+							if (sa > a) {
+								a = sa;
+							}
 						}
-						if (ftmpl != nullptr && trow != nullptr) {
+						if (!no_trmax && ftmpl != nullptr && trow != nullptr) {
 							const int ttx = x - sx - ftmpl->x0;
 							const int fv  = (ttx >= 0 && ttx < ftmpl->w) ? trow[x] : 0;
 							if (fv > a) {
